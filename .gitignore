@@ -1,0 +1,12 @@
+/Business-Drift-Engineering-Plan.md
+/Business-Drift-Project-Notes.md
+/Business-Drift-Interview-Study-Plan.md
+/Business-Drift-Interview-Preparation-Plan.md
+.env
+.env.*
+!.env.example
+/bin/
+/web/dist/
+/coverage/
+*.log
+.DS_Store
