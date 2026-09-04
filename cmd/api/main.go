@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	hubspotintegration "github.com/arpitkuriyal/business-drift/internal/integrations/hubspot"
 	stripeintegration "github.com/arpitkuriyal/business-drift/internal/integrations/stripe"
 	"github.com/arpitkuriyal/business-drift/internal/platform/config"
 	"github.com/arpitkuriyal/business-drift/internal/platform/database"
@@ -40,15 +41,15 @@ func main() {
 	if err != nil {
 		logger.Fatal("configure secret encryption", zap.Error(err))
 	}
-	stripeService := stripeintegration.NewService(resources.Postgres, resources.Redis, secretCipher, logger)
+	stripeService := stripeintegration.NewService(resources.Postgres, secretCipher)
+	hubSpotService := hubspotintegration.NewService(resources.Postgres, secretCipher, logger)
 
 	shutdownSignal, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go stripeService.RunWorker(shutdownSignal)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           httpserver.NewRouter(logger, resources, cfg.Environment, stripeService),
+		Handler:           httpserver.NewRouter(logger, resources, stripeService, hubSpotService),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

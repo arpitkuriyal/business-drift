@@ -11,11 +11,10 @@ import (
 const (
 	accessTokenLifetime  = 15 * time.Minute
 	refreshTokenLifetime = 30 * 24 * time.Hour
-	resetTokenLifetime   = 30 * time.Minute
 )
 
 // SessionPair contains the only copies of the usable tokens. PostgreSQL stores
-// SHA-256 hashes, similar to how a password reset token should be stored.
+// SHA-256 hashes so a database leak does not expose usable bearer tokens.
 type SessionPair struct {
 	AccessToken      string    `json:"access_token"`
 	AccessExpiresAt  time.Time `json:"access_expires_at"`

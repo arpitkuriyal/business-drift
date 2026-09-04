@@ -29,24 +29,15 @@ func (s *Service) RequireAuthentication(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRoles performs server-side authorization after authentication. Hiding
-// a button in the web app is never an authorization control.
-func RequireRoles(allowedRoles ...string) func(http.Handler) http.Handler {
-	allowed := make(map[string]bool, len(allowedRoles))
-	for _, role := range allowedRoles {
-		allowed[role] = true
-	}
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			identity, ok := IdentityFromContext(r.Context())
-			if !ok || !allowed[identity.Role] {
-				writeError(w, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
+func RequireOwner(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, ok := IdentityFromContext(r.Context())
+		if !ok || (identity.Role != "owner" && identity.Role != "admin") {
+			writeError(w, http.StatusForbidden, "permission_denied", "Owner access is required.")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func IdentityFromContext(ctx context.Context) (Identity, bool) {

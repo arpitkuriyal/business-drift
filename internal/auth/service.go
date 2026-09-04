@@ -107,9 +107,6 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (RegisterRe
 	if err != nil {
 		return RegisterResult{}, err
 	}
-	if err := addAuditEvent(ctx, tx, organizationID, userID, "organization.registered", "organization", organizationID); err != nil {
-		return RegisterResult{}, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return RegisterResult{}, fmt.Errorf("finish registration: %w", err)
 	}
@@ -143,9 +140,6 @@ func (s *Service) Login(ctx context.Context, organizationID, email, password str
 
 	session, err := issueSessionPair(ctx, tx, organizationID, userID, "")
 	if err != nil {
-		return SessionPair{}, err
-	}
-	if err := addAuditEvent(ctx, tx, organizationID, userID, "auth.login", "user", userID); err != nil {
 		return SessionPair{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -195,9 +189,6 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (SessionPair
 	if err != nil {
 		return SessionPair{}, err
 	}
-	if err := addAuditEvent(ctx, tx, organizationID, userID, "auth.token_refreshed", "user", userID); err != nil {
-		return SessionPair{}, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return SessionPair{}, fmt.Errorf("finish token refresh: %w", err)
 	}
@@ -211,13 +202,13 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var familyID, organizationID, userID string
+	var familyID string
 	err = tx.QueryRow(ctx, `
-		SELECT family_id, organization_id, user_id
+		SELECT family_id
 		FROM sessions
 		WHERE token_hash = $1 AND token_kind = 'refresh'
 		FOR UPDATE
-	`, tokenHash(refreshToken)).Scan(&familyID, &organizationID, &userID)
+	`, tokenHash(refreshToken)).Scan(&familyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrInvalidToken
 	}
@@ -226,9 +217,6 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	}
 	if _, err := tx.Exec(ctx, "UPDATE sessions SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL", familyID); err != nil {
 		return fmt.Errorf("revoke logout session: %w", err)
-	}
-	if err := addAuditEvent(ctx, tx, organizationID, userID, "auth.logout", "user", userID); err != nil {
-		return err
 	}
 	return tx.Commit(ctx)
 }
@@ -257,111 +245,6 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (Identit
 		return Identity{}, fmt.Errorf("authenticate token: %w", err)
 	}
 	return identity, nil
-}
-
-func (s *Service) ChangePassword(ctx context.Context, identity Identity, currentPassword, newPassword string) error {
-	if !validPassword(newPassword) {
-		return ErrInvalidInput
-	}
-
-	tx, err := s.database.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("start password change: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var currentHash string
-	if err := tx.QueryRow(ctx, "SELECT password_hash FROM users WHERE id = $1 FOR UPDATE", identity.UserID).Scan(&currentHash); err != nil {
-		return ErrInvalidCredentials
-	}
-	if !passwordMatches(currentPassword, currentHash) {
-		return ErrInvalidCredentials
-	}
-
-	newHash, err := hashPassword(newPassword)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", newHash, identity.UserID); err != nil {
-		return fmt.Errorf("update password: %w", err)
-	}
-	if _, err := tx.Exec(ctx, "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", identity.UserID); err != nil {
-		return fmt.Errorf("revoke sessions: %w", err)
-	}
-	if err := addAuditEvent(ctx, tx, identity.OrganizationID, identity.UserID, "auth.password_changed", "user", identity.UserID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-// RequestPasswordReset always succeeds from the caller's perspective. Returning
-// an empty token for an unknown email prevents account enumeration.
-func (s *Service) RequestPasswordReset(ctx context.Context, email string) (string, error) {
-	email = normalizeEmail(email)
-	var userID string
-	if err := s.database.QueryRow(ctx, "SELECT id FROM users WHERE email = $1", email).Scan(&userID); errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
-	} else if err != nil {
-		return "", fmt.Errorf("find reset user: %w", err)
-	}
-
-	token, err := newToken()
-	if err != nil {
-		return "", err
-	}
-	_, err = s.database.Exec(ctx, `
-		INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
-		VALUES ($1, $2, $3)
-	`, userID, tokenHash(token), time.Now().Add(resetTokenLifetime))
-	if err != nil {
-		return "", fmt.Errorf("store reset token: %w", err)
-	}
-	return token, nil
-}
-
-func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) error {
-	if !validPassword(newPassword) {
-		return ErrInvalidInput
-	}
-
-	tx, err := s.database.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("start password reset: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var userID string
-	err = tx.QueryRow(ctx, `
-		SELECT user_id FROM password_reset_tokens
-		WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
-		FOR UPDATE
-	`, tokenHash(token)).Scan(&userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrInvalidToken
-	}
-	if err != nil {
-		return fmt.Errorf("read reset token: %w", err)
-	}
-
-	newHash, err := hashPassword(newPassword)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", newHash, userID); err != nil {
-		return fmt.Errorf("reset password: %w", err)
-	}
-	// Consuming every outstanding reset token prevents an older email link from
-	// changing the password again after a successful reset.
-	if _, err := tx.Exec(ctx, "UPDATE password_reset_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL", userID); err != nil {
-		return fmt.Errorf("consume reset token: %w", err)
-	}
-	if _, err := tx.Exec(ctx, "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", userID); err != nil {
-		return fmt.Errorf("revoke sessions: %w", err)
-	}
-	if err := addAuditEvent(ctx, tx, "", userID, "auth.password_reset", "user", userID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
 }
 
 // AllowLogin uses a hashed key so email addresses and IP addresses are not
@@ -415,21 +298,6 @@ func issueSessionPair(ctx context.Context, tx pgx.Tx, organizationID, userID, fa
 		return SessionPair{}, fmt.Errorf("store session: %w", err)
 	}
 	return pair, nil
-}
-
-func addAuditEvent(ctx context.Context, tx pgx.Tx, organizationID, userID, action, targetType, targetID string) error {
-	var orgValue any
-	if organizationID != "" {
-		orgValue = organizationID
-	}
-	_, err := tx.Exec(ctx, `
-		INSERT INTO audit_events (organization_id, user_id, action, target_type, target_id)
-		VALUES ($1, $2, $3, $4, $5)
-	`, orgValue, userID, action, targetType, targetID)
-	if err != nil {
-		return fmt.Errorf("write audit event: %w", err)
-	}
-	return nil
 }
 
 func normalizeEmail(email string) string {

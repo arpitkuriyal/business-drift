@@ -1,4 +1,4 @@
-package stripeintegration
+package hubspotintegration
 
 import (
 	"encoding/json"
@@ -21,20 +21,20 @@ func NewHandler(service *Service) *Handler {
 
 func (h *Handler) Save(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		APIKey string `json:"api_key"`
+		AccessToken string `json:"access_token"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	identity, _ := auth.IdentityFromContext(r.Context())
-	integration, err := h.service.Save(r.Context(), identity, input.APIKey)
+	integration, err := h.service.Save(r.Context(), identity, input.AccessToken)
 	if errors.Is(err, ErrInvalidSecret) {
-		writeError(w, http.StatusBadRequest, "invalid_stripe_credentials", "A Stripe test API key is required.")
+		writeError(w, http.StatusBadRequest, "invalid_hubspot_credentials", "The HubSpot token or property mapping is invalid.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "The Stripe integration could not be saved.")
+		writeError(w, http.StatusInternalServerError, "internal_error", "The HubSpot integration could not be saved.")
 		return
 	}
 	writeJSON(w, http.StatusOK, integration)
@@ -44,11 +44,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.IdentityFromContext(r.Context())
 	integration, err := h.service.Get(r.Context(), identity.OrganizationID)
 	if errors.Is(err, ErrNotFound) {
-		writeError(w, http.StatusNotFound, "stripe_not_configured", "Stripe is not configured for this organization.")
+		writeError(w, http.StatusNotFound, "hubspot_not_configured", "HubSpot is not configured for this organization.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "The Stripe integration could not be loaded.")
+		writeError(w, http.StatusInternalServerError, "internal_error", "The HubSpot integration could not be loaded.")
 		return
 	}
 	writeJSON(w, http.StatusOK, integration)
@@ -58,11 +58,11 @@ func (h *Handler) Sync(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.IdentityFromContext(r.Context())
 	result, err := h.service.Sync(r.Context(), identity)
 	if errors.Is(err, ErrNotFound) {
-		writeError(w, http.StatusNotFound, "stripe_not_configured", "Configure Stripe before starting a sync.")
+		writeError(w, http.StatusNotFound, "hubspot_not_configured", "Configure HubSpot before starting a sync.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "stripe_sync_failed", "Stripe customers could not be synchronized.")
+		writeError(w, http.StatusBadGateway, "hubspot_sync_failed", "HubSpot companies could not be synchronized.")
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

@@ -12,12 +12,11 @@ import (
 const maxAuthBodyBytes = 16 * 1024
 
 type Handler struct {
-	service     *Service
-	environment string
+	service *Service
 }
 
-func NewHandler(service *Service, environment string) *Handler {
-	return &Handler{service: service, environment: environment}
+func NewHandler(service *Service) *Handler {
+	return &Handler{service: service}
 }
 
 // RegisterRoutes keeps all authentication URLs together and makes it obvious
@@ -27,11 +26,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.HandleFunc("POST /api/v1/auth/refresh", h.refresh)
 	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
-	mux.HandleFunc("POST /api/v1/auth/password/request-reset", h.requestPasswordReset)
-	mux.HandleFunc("POST /api/v1/auth/password/reset", h.resetPassword)
 
 	mux.Handle("GET /api/v1/auth/me", h.service.RequireAuthentication(http.HandlerFunc(h.me)))
-	mux.Handle("POST /api/v1/auth/password/change", h.service.RequireAuthentication(http.HandlerFunc(h.changePassword)))
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
@@ -132,69 +128,6 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	identity, _ := IdentityFromContext(r.Context())
 	writeJSON(w, http.StatusOK, identity)
-}
-
-func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
-	identity, _ := IdentityFromContext(r.Context())
-	var input struct {
-		CurrentPassword string `json:"current_password"`
-		NewPassword     string `json:"new_password"`
-	}
-	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	if err := h.service.ChangePassword(r.Context(), identity, input.CurrentPassword, input.NewPassword); errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrInvalidInput) {
-		writeError(w, http.StatusBadRequest, "password_change_failed", "Check the current password and use a new password of 12–128 characters.")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "The password could not be changed.")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) requestPasswordReset(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Email string `json:"email"`
-	}
-	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-
-	token, err := h.service.RequestPasswordReset(r.Context(), input.Email)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "The reset request could not be completed.")
-		return
-	}
-
-	response := map[string]string{"message": "If the account exists, password reset instructions are available."}
-	// There is no email provider in Phase 1. Returning the token is strictly a
-	// local demo aid and is impossible when APP_ENV is test or production.
-	if h.environment == "development" && token != "" {
-		response["development_reset_token"] = token
-	}
-	writeJSON(w, http.StatusAccepted, response)
-}
-
-func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Token       string `json:"token"`
-		NewPassword string `json:"new_password"`
-	}
-	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	if err := h.service.ResetPassword(r.Context(), input.Token, input.NewPassword); errors.Is(err, ErrInvalidToken) || errors.Is(err, ErrInvalidInput) {
-		writeError(w, http.StatusBadRequest, "password_reset_failed", "The reset token is invalid or expired, or the password does not meet requirements.")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "The password could not be reset.")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {
