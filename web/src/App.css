@@ -260,7 +260,7 @@ input:focus { border-color: #39745f; box-shadow: 0 0 0 3px rgba(57, 116, 95, 0.1
 .text-button { border: 0; padding: 8px; color: #1b5a47; background: transparent; }
 .page-message { margin: -18px 0 24px; }
 .content-stack { display: grid; gap: 24px; }
-.metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 
 .metric-card {
   position: relative;
@@ -289,7 +289,7 @@ input:focus { border-color: #39745f; box-shadow: 0 0 0 3px rgba(57, 116, 95, 0.1
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
 .section-heading.compact { margin-bottom: 24px; }
 .section-heading .eyebrow { margin-bottom: 7px; }
-.section-heading h2, .integration-summary h2, .fixture-explainer h2 { margin: 0; color: #18231f; font-size: 23px; letter-spacing: -0.035em; }
+.section-heading h2, .integration-summary h2 { margin: 0; color: #18231f; font-size: 23px; letter-spacing: -0.035em; }
 
 .finding-list { margin: 0 -10px -10px; }
 .finding-row {
@@ -330,6 +330,7 @@ input:focus { border-color: #39745f; box-shadow: 0 0 0 3px rgba(57, 116, 95, 0.1
 .two-column { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(380px, 1.1fr); gap: 20px; align-items: start; }
 .integration-summary { display: grid; gap: 24px; }
 .integration-logo { display: grid; width: 52px; height: 52px; place-items: center; border-radius: 15px; color: white; background: #6655c7; font-size: 23px; font-weight: 800; }
+.hubspot-logo { background: #ff7a59; }
 .detail-list { display: grid; margin: 0; }
 .detail-list div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 18px; padding: 13px 0; border-top: 1px solid #eceae4; }
 .detail-list dt { color: #7b8681; font-size: 11px; }
@@ -339,8 +340,6 @@ code { border-radius: 5px; padding: 3px 5px; color: #38594c; background: #edf2ef
 .field-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 select { width: 100%; border: 1px solid #d6d9d5; border-radius: 11px; padding: 13px 14px; color: #14201c; background: #fff; font: inherit; outline: none; }
 select:focus { border-color: #39745f; box-shadow: 0 0 0 3px rgba(57, 116, 95, 0.12); }
-.fixture-explainer { display: grid; gap: 10px; }
-.fixture-explainer ol { display: grid; gap: 16px; margin: 16px 0; padding-left: 21px; color: #596660; font-size: 13px; line-height: 1.6; }
 .result-card { display: grid; gap: 5px; margin-top: 12px; border-radius: 12px; padding: 16px; color: #294a3d; background: #edf8e2; }
 .result-card span { font-size: 11px; }
 

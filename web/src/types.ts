@@ -47,19 +47,17 @@ export type StripeIntegration = {
   status: 'active' | 'error' | 'disconnected'
   last_synced_at?: string
   last_error?: string
-  webhook_path: string
 }
 
-export type FixtureInput = {
-  customer_name: string
-  stripe_customer_id: string
-  hubspot_company_id: string
-  stripe_subscription_status: string
-  hubspot_customer_status: string
+export type HubSpotIntegration = {
+  id: string
+  status: 'active' | 'error' | 'disconnected'
+  last_synced_at?: string
+  last_error?: string
 }
 
-export type FixtureResult = {
-  customer_id: string
-  finding_id?: string
-  outcome: 'finding_open' | 'no_mismatch'
+export type HubSpotSyncResult = {
+  companies: number
+  matched: number
+  findings: number
 }

@@ -2,15 +2,17 @@ import { useEffect, useState, type FormEvent } from 'react'
 import {
   getFinding,
   getFindings,
+  getHubSpot,
   getOrganization,
   getStripe,
-  ingestFixture,
+  saveHubSpot,
   saveStripe,
+  syncHubSpot,
   syncStripe,
 } from '../api'
-import type { Finding, FixtureInput, FixtureResult, Identity, Organization, StripeIntegration } from '../types'
+import type { Finding, HubSpotIntegration, Identity, Organization, StripeIntegration } from '../types'
 
-type View = 'overview' | 'findings' | 'integration' | 'fixture'
+type View = 'overview' | 'findings' | 'stripe' | 'hubspot'
 
 type Props = {
   identity: Identity
@@ -42,6 +44,7 @@ export function Dashboard({ identity, onLogout }: Props) {
   const [organization, setOrganization] = useState<Organization | null>(null)
   const [findings, setFindings] = useState<Finding[]>([])
   const [stripe, setStripe] = useState<StripeIntegration | null>(null)
+  const [hubSpot, setHubSpot] = useState<HubSpotIntegration | null>(null)
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -50,14 +53,16 @@ export function Dashboard({ identity, onLogout }: Props) {
     setLoading(true)
     setError('')
     try {
-      const [organizationResult, findingsResult, stripeResult] = await Promise.all([
+      const [organizationResult, findingsResult, stripeResult, hubSpotResult] = await Promise.all([
         getOrganization(),
         getFindings(),
         getStripe(),
+        getHubSpot(),
       ])
       setOrganization(organizationResult)
       setFindings(findingsResult.data)
       setStripe(stripeResult)
+      setHubSpot(hubSpotResult)
     } catch (requestError) {
       setError(messageFrom(requestError))
     } finally {
@@ -68,12 +73,13 @@ export function Dashboard({ identity, onLogout }: Props) {
   useEffect(() => {
     let cancelled = false
 
-    Promise.all([getOrganization(), getFindings(), getStripe()])
-      .then(([organizationResult, findingsResult, stripeResult]) => {
+    Promise.all([getOrganization(), getFindings(), getStripe(), getHubSpot()])
+      .then(([organizationResult, findingsResult, stripeResult, hubSpotResult]) => {
         if (cancelled) return
         setOrganization(organizationResult)
         setFindings(findingsResult.data)
         setStripe(stripeResult)
+        setHubSpot(hubSpotResult)
       })
       .catch((requestError: unknown) => {
         if (!cancelled) setError(messageFrom(requestError))
@@ -110,8 +116,8 @@ export function Dashboard({ identity, onLogout }: Props) {
         <nav className="main-nav" aria-label="Workspace navigation">
           <NavButton active={view === 'overview'} label="Overview" mark="O" onClick={() => setView('overview')} />
           <NavButton active={view === 'findings'} label="Findings" mark="F" count={openFindings.length} onClick={() => setView('findings')} />
-          <NavButton active={view === 'integration'} label="Stripe" mark="S" onClick={() => setView('integration')} />
-          {canManage && <NavButton active={view === 'fixture'} label="Demo data" mark="D" onClick={() => setView('fixture')} />}
+          <NavButton active={view === 'stripe'} label="Stripe" mark="S" onClick={() => setView('stripe')} />
+          <NavButton active={view === 'hubspot'} label="HubSpot" mark="H" onClick={() => setView('hubspot')} />
         </nav>
 
         <div className="sidebar-user">
@@ -144,15 +150,18 @@ export function Dashboard({ identity, onLogout }: Props) {
               <Overview
                 findings={findings}
                 stripe={stripe}
+                hubSpot={hubSpot}
                 onSeeFindings={() => setView('findings')}
                 onOpenFinding={openFinding}
               />
             )}
             {view === 'findings' && <FindingsView findings={findings} onOpenFinding={openFinding} />}
-            {view === 'integration' && (
+            {view === 'stripe' && (
               <StripeView integration={stripe} canManage={canManage} onChanged={setStripe} />
             )}
-            {view === 'fixture' && canManage && <FixtureView onCreated={loadWorkspace} />}
+            {view === 'hubspot' && (
+              <HubSpotView integration={hubSpot} canManage={canManage} onChanged={setHubSpot} onSynced={loadWorkspace} />
+            )}
           </>
         )}
       </main>
@@ -176,14 +185,15 @@ function viewTitle(view: View) {
   return {
     overview: 'Revenue health overview',
     findings: 'Review findings',
-    integration: 'Stripe integration',
-    fixture: 'Create demo evidence',
+    stripe: 'Stripe integration',
+    hubspot: 'HubSpot integration',
   }[view]
 }
 
-function Overview({ findings, stripe, onSeeFindings, onOpenFinding }: {
+function Overview({ findings, stripe, hubSpot, onSeeFindings, onOpenFinding }: {
   findings: Finding[]
   stripe: StripeIntegration | null
+  hubSpot: HubSpotIntegration | null
   onSeeFindings: () => void
   onOpenFinding: (id: string) => void
 }) {
@@ -196,6 +206,7 @@ function Overview({ findings, stripe, onSeeFindings, onOpenFinding }: {
         <MetricCard label="Open findings" value={String(open.length)} note="Need review" tone="lime" />
         <MetricCard label="High risk" value={String(highRisk.length)} note="Prioritize these" tone="coral" />
         <MetricCard label="Stripe" value={stripe?.status ?? 'Not connected'} note={stripe ? `Synced ${formatDate(stripe.last_synced_at)}` : 'Add sandbox credentials'} />
+        <MetricCard label="HubSpot" value={hubSpot?.status ?? 'Not connected'} note={hubSpot ? `Synced ${formatDate(hubSpot.last_synced_at)}` : 'Add a private-app token'} />
       </section>
 
       <section className="surface">
@@ -287,7 +298,6 @@ function StripeView({ integration, canManage, onChanged }: {
     try {
       const result = await saveStripe({
         api_key: String(values.get('api_key') ?? ''),
-        webhook_secret: String(values.get('webhook_secret') ?? ''),
       })
       onChanged(result)
       event.currentTarget.reset()
@@ -305,7 +315,7 @@ function StripeView({ integration, canManage, onChanged }: {
     setMessage('')
     try {
       const result = await syncStripe()
-      setMessage(`Sync queued. Job ${result.job_id.slice(0, 8)} is ${result.status}.`)
+      setMessage(`Imported ${result.customers} customers and ${result.subscriptions} subscriptions.`)
     } catch (requestError) {
       setError(messageFrom(requestError))
     } finally {
@@ -320,14 +330,13 @@ function StripeView({ integration, canManage, onChanged }: {
         <div>
           <p className="eyebrow">Billing source</p>
           <h2>Stripe sandbox</h2>
-          <p className="muted">Import customers and subscriptions, then receive ongoing updates by webhook.</p>
+          <p className="muted">Import customers and subscriptions from Stripe test mode.</p>
         </div>
         <dl className="detail-list">
           <div><dt>Status</dt><dd><span className={`status-pill ${integration?.status === 'active' ? 'open' : 'resolved'}`}>{integration?.status ?? 'not configured'}</span></dd></div>
           <div><dt>Last sync</dt><dd>{formatDate(integration?.last_synced_at)}</dd></div>
-          {integration?.webhook_path && <div><dt>Webhook path</dt><dd><code>{integration.webhook_path}</code></dd></div>}
         </dl>
-        {integration && canManage && <button className="primary-button" type="button" onClick={() => void handleSync()} disabled={busy}>Queue Stripe sync</button>}
+        {integration && canManage && <button className="primary-button" type="button" onClick={() => void handleSync()} disabled={busy}>{busy ? 'Syncing…' : 'Sync Stripe'}</button>}
       </section>
 
       <section className="surface">
@@ -339,9 +348,8 @@ function StripeView({ integration, canManage, onChanged }: {
         </div>
         {canManage ? (
           <form className="stack-form" onSubmit={handleSave}>
-            <p className="muted">Only test or restricted test keys are accepted. Secrets are encrypted by the backend.</p>
+            <p className="muted">Only test keys are accepted. The backend encrypts the key.</p>
             <label>Sandbox API key<input name="api_key" type="password" placeholder="sk_test_…" autoComplete="off" required /></label>
-            <label>Webhook signing secret<input name="webhook_secret" type="password" placeholder="whsec_…" autoComplete="off" required /></label>
             {error && <p className="form-message error-message" role="alert">{error}</p>}
             {message && <p className="form-message success-message" role="status">{message}</p>}
             <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save configuration'}</button>
@@ -354,21 +362,44 @@ function StripeView({ integration, canManage, onChanged }: {
   )
 }
 
-function FixtureView({ onCreated }: { onCreated: () => Promise<void> }) {
+function HubSpotView({ integration, canManage, onChanged, onSynced }: {
+  integration: HubSpotIntegration | null
+  canManage: boolean
+  onChanged: (integration: HubSpotIntegration) => void
+  onSynced: () => Promise<void>
+}) {
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<FixtureResult | null>(null)
+  const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setBusy(true)
     setError('')
-    setResult(null)
+    setMessage('')
     const values = new FormData(event.currentTarget)
-    const input = Object.fromEntries(values) as FixtureInput
     try {
-      setResult(await ingestFixture(input))
-      await onCreated()
+      const result = await saveHubSpot({
+        access_token: String(values.get('access_token') ?? ''),
+      })
+      onChanged(result)
+      event.currentTarget.reset()
+      setMessage('HubSpot connection saved securely.')
+    } catch (requestError) {
+      setError(messageFrom(requestError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleSync() {
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await syncHubSpot()
+      setMessage(`Imported ${result.companies} companies, matched ${result.matched} to Stripe, and detected ${result.findings} mismatches.`)
+      await onSynced()
     } catch (requestError) {
       setError(messageFrom(requestError))
     } finally {
@@ -377,46 +408,38 @@ function FixtureView({ onCreated }: { onCreated: () => Promise<void> }) {
   }
 
   return (
-    <div className="two-column fixture-layout">
+    <div className="two-column">
+      <section className="surface integration-summary">
+        <div className="integration-logo hubspot-logo">H</div>
+        <div>
+          <p className="eyebrow">CRM source</p>
+          <h2>HubSpot</h2>
+          <p className="muted">Import companies and compare their customer status with Stripe.</p>
+        </div>
+        <dl className="detail-list">
+          <div><dt>Status</dt><dd><span className={`status-pill ${integration?.status === 'active' ? 'open' : 'resolved'}`}>{integration?.status ?? 'not configured'}</span></dd></div>
+          <div><dt>Last sync</dt><dd>{formatDate(integration?.last_synced_at)}</dd></div>
+        </dl>
+        {integration && canManage && <button className="primary-button" type="button" onClick={() => void handleSync()} disabled={busy}>{busy ? 'Syncing…' : 'Sync HubSpot companies'}</button>}
+        {message && <p className="form-message success-message" role="status">{message}</p>}
+        {error && <p className="form-message error-message" role="alert">{error}</p>}
+      </section>
+
       <section className="surface">
         <div className="section-heading compact">
-          <div><p className="eyebrow">Development only</p><h2>Ingest fixture event</h2></div>
+          <div>
+            <p className="eyebrow">Configuration</p>
+            <h2>{integration ? 'Replace connection' : 'Connect HubSpot'}</h2>
+          </div>
         </div>
-        <form className="stack-form" onSubmit={handleSubmit}>
-          <label>Customer name<input name="customer_name" defaultValue="Northstar Labs" required /></label>
-          <div className="field-pair">
-            <label>Stripe customer ID<input name="stripe_customer_id" defaultValue="cus_demo_001" required /></label>
-            <label>HubSpot company ID<input name="hubspot_company_id" defaultValue="company_demo_001" required /></label>
-          </div>
-          <div className="field-pair">
-            <label>Stripe subscription
-              <select name="stripe_subscription_status" defaultValue="active">
-                <option value="active">Active</option><option value="past_due">Past due</option><option value="canceled">Canceled</option>
-              </select>
-            </label>
-            <label>HubSpot customer
-              <select name="hubspot_customer_status" defaultValue="churned">
-                <option value="active">Active</option><option value="inactive">Inactive</option><option value="churned">Churned</option><option value="unknown">Unknown</option>
-              </select>
-            </label>
-          </div>
-          {error && <p className="form-message error-message" role="alert">{error}</p>}
-          <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Evaluating…' : 'Ingest and evaluate'}</button>
-        </form>
-      </section>
-      <section className="surface fixture-explainer">
-        <p className="eyebrow">What this proves</p>
-        <h2>One small end-to-end path</h2>
-        <ol>
-          <li>Map Stripe and HubSpot IDs to one customer.</li>
-          <li>Store normalized facts from both sources.</li>
-          <li>Run the mismatch rule and save its evidence.</li>
-        </ol>
-        {result && (
-          <div className="result-card" role="status">
-            <strong>{result.outcome === 'finding_open' ? 'Finding opened' : 'No mismatch found'}</strong>
-            <span>Customer {result.customer_id.slice(0, 8)}</span>
-          </div>
+        {canManage ? (
+          <form className="stack-form" onSubmit={handleSave}>
+            <p className="muted">Use a HubSpot private-app token with company read access. The backend validates and encrypts it.</p>
+            <label>Private-app access token<input name="access_token" type="password" placeholder="pat-…" autoComplete="off" required /></label>
+            <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Checking…' : 'Save connection'}</button>
+          </form>
+        ) : (
+          <EmptyState title="View-only access" body="An owner or admin can update HubSpot credentials and start a sync." />
         )}
       </section>
     </div>

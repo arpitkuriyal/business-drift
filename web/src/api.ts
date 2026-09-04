@@ -1,7 +1,7 @@
 import type {
   Finding,
-  FixtureInput,
-  FixtureResult,
+  HubSpotIntegration,
+  HubSpotSyncResult,
   Identity,
   Organization,
   Session,
@@ -106,14 +106,26 @@ export async function getStripe(): Promise<StripeIntegration | null> {
   }
 }
 
-export const saveStripe = (input: { api_key: string; webhook_secret: string }) =>
+export const saveStripe = (input: { api_key: string }) =>
   request<StripeIntegration>('/api/v1/integrations/stripe', { method: 'POST', body: JSON.stringify(input) })
 
 export const syncStripe = () =>
-  request<{ job_id: string; status: string }>('/api/v1/integrations/stripe/sync', { method: 'POST' })
+  request<{ customers: number; subscriptions: number }>('/api/v1/integrations/stripe/sync', { method: 'POST' })
 
-export const ingestFixture = (input: FixtureInput) =>
-  request<FixtureResult>('/api/v1/dev/fixture-events', { method: 'POST', body: JSON.stringify(input) })
+export async function getHubSpot(): Promise<HubSpotIntegration | null> {
+  try {
+    return await request<HubSpotIntegration>('/api/v1/integrations/hubspot')
+  } catch (error) {
+    if (error instanceof APIError && error.status === 404) return null
+    throw error
+  }
+}
+
+export const saveHubSpot = (input: { access_token: string }) =>
+  request<HubSpotIntegration>('/api/v1/integrations/hubspot', { method: 'POST', body: JSON.stringify(input) })
+
+export const syncHubSpot = () =>
+  request<HubSpotSyncResult>('/api/v1/integrations/hubspot/sync', { method: 'POST' })
 
 export async function logout() {
   const session = loadSession()
