@@ -13,30 +13,59 @@ import (
 	"github.com/arpitkuriyal/business-drift/internal/detection"
 )
 
-func (s *Service) storeCompany(ctx context.Context, organizationID string, company companyRecord) (bool, bool, error) {
+func (s *Service) storeCompany(ctx context.Context, organizationID string, company companyRecord) (bool, int, error) {
 	if company.ID == "" {
-		return false, false, errors.New("HubSpot company has no ID")
+		return false, 0, errors.New("HubSpot company has no ID")
 	}
 	tx, err := s.database.Begin(ctx)
 	if err != nil {
-		return false, false, err
+		return false, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	customerID, matched, err := resolveCustomer(ctx, tx, organizationID, company)
 	if err != nil {
-		return false, false, err
+		return false, 0, err
 	}
 	if err := saveHubSpotFact(ctx, tx, organizationID, customerID, "hubspot.company.domain", company.Domain, company.ObservedAt); err != nil {
-		return false, false, err
+		return false, 0, err
 	}
 	if err := saveHubSpotFact(ctx, tx, organizationID, customerID, "hubspot.customer.status", company.Status, company.ObservedAt); err != nil {
-		return false, false, err
+		return false, 0, err
 	}
-	finding, err := compareStatus(ctx, tx, organizationID, customerID, company)
+
+	findingCount := 0
+	missing := detection.EvaluateMissingCustomer(detection.CustomerPresence{
+		CustomerName: firstNonEmpty(company.Name, company.Domain, company.ID),
+		HasStripe:    matched,
+		HasHubSpot:   true,
+	})
+	if missing != nil {
+		created, err := upsertFinding(ctx, tx, organizationID, customerID, missing, company.ObservedAt, []findingEvidence{
+			{source: "hubspot", factType: "hubspot.company.domain", value: company.Domain, at: company.ObservedAt},
+		})
+		if err != nil {
+			return false, 0, err
+		}
+		if created {
+			findingCount++
+		}
+	} else {
+		if err := resolveFinding(ctx, tx, organizationID, customerID, detection.MissingInHubSpotRuleName, company.ObservedAt); err != nil {
+			return false, 0, err
+		}
+		if err := resolveFinding(ctx, tx, organizationID, customerID, detection.MissingInStripeRuleName, company.ObservedAt); err != nil {
+			return false, 0, err
+		}
+	}
+
+	statusFinding, err := compareStatus(ctx, tx, organizationID, customerID, company)
 	if err != nil {
-		return false, false, err
+		return false, 0, err
 	}
-	return matched, finding, tx.Commit(ctx)
+	if statusFinding {
+		findingCount++
+	}
+	return matched, findingCount, tx.Commit(ctx)
 }
 
 func resolveCustomer(ctx context.Context, tx pgx.Tx, organizationID string, company companyRecord) (string, bool, error) {
@@ -130,49 +159,14 @@ func compareStatus(ctx context.Context, tx pgx.Tx, organizationID, customerID st
 	candidate := detection.EvaluateStatusMismatch(detection.CustomerSnapshot{
 		CustomerName: name, StripeSubscriptionStatus: stripeStatus, HubSpotCustomerStatus: company.Status,
 	})
-	fingerprint := hashParts(organizationID, customerID, detection.StatusMismatchRuleName)
 	if candidate == nil {
-		_, err := tx.Exec(ctx, `
-			UPDATE findings SET status = 'resolved', resolved_at = $1, updated_at = now()
-			WHERE organization_id = $2 AND fingerprint = $3 AND status = 'open'
-		`, company.ObservedAt, organizationID, fingerprint)
-		return false, err
+		return false, resolveFinding(ctx, tx, organizationID, customerID, detection.StatusMismatchRuleName, company.ObservedAt)
 	}
 
-	var findingID string
-	err = tx.QueryRow(ctx, `
-		INSERT INTO findings (organization_id, customer_id, rule_name, rule_version, fingerprint,
-			status, risk, title, explanation, first_detected_at, last_detected_at)
-		VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8, $9, $9)
-		ON CONFLICT (organization_id, fingerprint) DO UPDATE SET
-			status = 'open', title = EXCLUDED.title, explanation = EXCLUDED.explanation,
-			last_detected_at = EXCLUDED.last_detected_at, resolved_at = NULL, updated_at = now()
-		RETURNING id
-	`, organizationID, customerID, candidate.RuleName, candidate.RuleVersion, fingerprint,
-		candidate.Risk, candidate.Title, candidate.Explanation, company.ObservedAt).Scan(&findingID)
-	if err != nil {
-		return false, err
-	}
-
-	evidence := []struct {
-		source, fact, value string
-		at                  time.Time
-	}{
-		{"stripe", "stripe.subscription.status", stripeStatus, stripeObservedAt},
-		{"hubspot", "hubspot.customer.status", company.Status, company.ObservedAt},
-	}
-	for _, item := range evidence {
-		_, err = tx.Exec(ctx, `
-			INSERT INTO finding_evidence (organization_id, finding_id, source, fact_type, value, observed_at, fingerprint)
-			VALUES ($1, $2, $3, $4, to_jsonb($5::text), $6, $7)
-			ON CONFLICT (organization_id, finding_id, fingerprint) DO NOTHING
-		`, organizationID, findingID, item.source, item.fact, item.value, item.at,
-			hashParts(item.source, item.fact, item.value, item.at.Format(time.RFC3339Nano)))
-		if err != nil {
-			return false, err
-		}
-	}
-	return true, nil
+	return upsertFinding(ctx, tx, organizationID, customerID, candidate, company.ObservedAt, []findingEvidence{
+		{source: "stripe", factType: "stripe.subscription.status", value: stripeStatus, at: stripeObservedAt},
+		{source: "hubspot", factType: "hubspot.customer.status", value: company.Status, at: company.ObservedAt},
+	})
 }
 
 func saveHubSpotFact(ctx context.Context, tx pgx.Tx, organizationID, customerID, factType, value string, observedAt time.Time) error {

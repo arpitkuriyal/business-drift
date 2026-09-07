@@ -104,7 +104,7 @@ func (s *Service) Sync(ctx context.Context, identity auth.Identity) (SyncResult,
 	result := SyncResult{Companies: len(companies)}
 	for _, company := range companies {
 		company.Status = normalizeStatus(company.Status)
-		matched, finding, err := s.storeCompany(ctx, identity.OrganizationID, company)
+		matched, findings, err := s.storeCompany(ctx, identity.OrganizationID, company)
 		if err != nil {
 			s.recordSyncError(ctx, integration.ID, err)
 			return SyncResult{}, err
@@ -112,10 +112,14 @@ func (s *Service) Sync(ctx context.Context, identity auth.Identity) (SyncResult,
 		if matched {
 			result.Matched++
 		}
-		if finding {
-			result.Findings++
-		}
+		result.Findings += findings
 	}
+	missingFromHubSpot, err := s.findStripeCustomersMissingHubSpot(ctx, identity.OrganizationID)
+	if err != nil {
+		s.recordSyncError(ctx, integration.ID, err)
+		return SyncResult{}, err
+	}
+	result.Findings += missingFromHubSpot
 	_, err = s.database.Exec(ctx, `
 		UPDATE integrations SET status = 'active', last_synced_at = now(), last_error = NULL, updated_at = now()
 		WHERE id = $1
