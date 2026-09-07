@@ -30,6 +30,12 @@ function formatDate(value?: string) {
   return new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
 
+function integrationStatus(status?: string) {
+  if (!status) return 'Not connected'
+  if (status === 'active') return 'Connected'
+  return status
+}
+
 function initials(value: string) {
   return value
     .split(/\s+/)
@@ -205,8 +211,8 @@ function Overview({ findings, stripe, hubSpot, onSeeFindings, onOpenFinding }: {
       <section className="metric-grid" aria-label="Workspace metrics">
         <MetricCard label="Open findings" value={String(open.length)} note="Need review" tone="lime" />
         <MetricCard label="High risk" value={String(highRisk.length)} note="Prioritize these" tone="coral" />
-        <MetricCard label="Stripe" value={stripe?.status ?? 'Not connected'} note={stripe ? `Synced ${formatDate(stripe.last_synced_at)}` : 'Add sandbox credentials'} />
-        <MetricCard label="HubSpot" value={hubSpot?.status ?? 'Not connected'} note={hubSpot ? `Synced ${formatDate(hubSpot.last_synced_at)}` : 'Add a private-app token'} />
+        <MetricCard label="Stripe" value={integrationStatus(stripe?.status)} note={stripe ? `Synced ${formatDate(stripe.last_synced_at)}` : 'Add sandbox credentials'} />
+        <MetricCard label="HubSpot" value={integrationStatus(hubSpot?.status)} note={hubSpot ? `Synced ${formatDate(hubSpot.last_synced_at)}` : 'Add a private-app token'} />
       </section>
 
       <section className="surface">
@@ -291,16 +297,17 @@ function StripeView({ integration, canManage, onChanged }: {
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const form = event.currentTarget
     setBusy(true)
     setError('')
     setMessage('')
-    const values = new FormData(event.currentTarget)
+    const values = new FormData(form)
     try {
       const result = await saveStripe({
         api_key: String(values.get('api_key') ?? ''),
       })
       onChanged(result)
-      event.currentTarget.reset()
+      form.reset()
       setMessage('Sandbox credentials saved securely.')
     } catch (requestError) {
       setError(messageFrom(requestError))
@@ -333,7 +340,7 @@ function StripeView({ integration, canManage, onChanged }: {
           <p className="muted">Import customers and subscriptions from Stripe test mode.</p>
         </div>
         <dl className="detail-list">
-          <div><dt>Status</dt><dd><span className={`status-pill ${integration?.status === 'active' ? 'open' : 'resolved'}`}>{integration?.status ?? 'not configured'}</span></dd></div>
+          <div><dt>Status</dt><dd><span className={`status-pill ${integration?.status === 'active' ? 'resolved' : 'open'}`}>{integrationStatus(integration?.status)}</span></dd></div>
           <div><dt>Last sync</dt><dd>{formatDate(integration?.last_synced_at)}</dd></div>
         </dl>
         {integration && canManage && <button className="primary-button" type="button" onClick={() => void handleSync()} disabled={busy}>{busy ? 'Syncing…' : 'Sync Stripe'}</button>}
@@ -374,16 +381,17 @@ function HubSpotView({ integration, canManage, onChanged, onSynced }: {
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const form = event.currentTarget
     setBusy(true)
     setError('')
     setMessage('')
-    const values = new FormData(event.currentTarget)
+    const values = new FormData(form)
     try {
       const result = await saveHubSpot({
         access_token: String(values.get('access_token') ?? ''),
       })
       onChanged(result)
-      event.currentTarget.reset()
+      form.reset()
       setMessage('HubSpot connection saved securely.')
     } catch (requestError) {
       setError(messageFrom(requestError))
@@ -417,7 +425,7 @@ function HubSpotView({ integration, canManage, onChanged, onSynced }: {
           <p className="muted">Import companies and compare their customer status with Stripe.</p>
         </div>
         <dl className="detail-list">
-          <div><dt>Status</dt><dd><span className={`status-pill ${integration?.status === 'active' ? 'open' : 'resolved'}`}>{integration?.status ?? 'not configured'}</span></dd></div>
+          <div><dt>Status</dt><dd><span className={`status-pill ${integration?.status === 'active' ? 'resolved' : 'open'}`}>{integrationStatus(integration?.status)}</span></dd></div>
           <div><dt>Last sync</dt><dd>{formatDate(integration?.last_synced_at)}</dd></div>
         </dl>
         {integration && canManage && <button className="primary-button" type="button" onClick={() => void handleSync()} disabled={busy}>{busy ? 'Syncing…' : 'Sync HubSpot companies'}</button>}
