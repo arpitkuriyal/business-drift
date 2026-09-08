@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900" role="img" aria-labelledby="title description">
+  <title id="title">Business Drift architecture and data flow</title>
+  <desc id="description">A browser calls the Go API. The API imports Stripe and HubSpot data, normalizes and matches customers, runs detection rules, and returns findings. PostgreSQL stores application data and Redis rate limits login attempts.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#d0d7de"/>
+    </marker>
+    <style>
+      .bg { fill: #0d1117; }
+      .box { fill: #161b22; stroke: #d0d7de; stroke-width: 1.5; rx: 4; }
+      .accent { fill: #142812; stroke: #a6e22e; stroke-width: 1.8; rx: 4; }
+      .store { fill: #161b22; stroke: #8b949e; stroke-width: 1.5; rx: 28; }
+      .line { fill: none; stroke: #d0d7de; stroke-width: 1.5; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #8b949e; stroke-width: 1.4; stroke-dasharray: 7 6; marker-end: url(#arrow); }
+      .title { fill: #f0f6fc; font: 700 20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-anchor: middle; }
+      .label { fill: #f0f6fc; font: 600 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-anchor: middle; }
+      .small { fill: #b1bac4; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-anchor: middle; }
+      .edge { fill: #c9d1d9; font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1200" height="900"/>
+  <text class="title" x="600" y="34">Business Drift — architecture and comparison flow</text>
+
+  <rect class="box" x="475" y="58" width="250" height="66"/>
+  <text class="label" x="600" y="86">User / Browser</text>
+  <text class="small" x="600" y="108">React dashboard</text>
+
+  <path class="line" d="M600 124 L600 172"/>
+  <text class="edge" x="663" y="151">JSON request</text>
+
+  <rect class="box" x="450" y="174" width="300" height="72"/>
+  <text class="label" x="600" y="204">Go HTTP API</text>
+  <text class="small" x="600" y="228">Authentication and organization boundary</text>
+
+  <path class="line" d="M520 246 L355 306"/>
+  <text class="edge" x="414" y="274">Manual sync</text>
+  <path class="line" d="M680 246 L845 306"/>
+  <text class="edge" x="786" y="274">Manual sync</text>
+
+  <rect class="box" x="220" y="308" width="270" height="76"/>
+  <text class="label" x="355" y="338">Stripe sandbox API</text>
+  <text class="small" x="355" y="362">Customers and subscriptions</text>
+
+  <rect class="box" x="710" y="308" width="270" height="76"/>
+  <text class="label" x="845" y="338">HubSpot API</text>
+  <text class="small" x="845" y="362">Companies and lifecycle stages</text>
+
+  <path class="line" d="M355 384 L520 444"/>
+  <path class="line" d="M845 384 L680 444"/>
+  <text class="edge" x="600" y="420">Imported source data</text>
+
+  <rect class="box" x="450" y="446" width="300" height="70"/>
+  <text class="label" x="600" y="475">Normalize data</text>
+  <text class="small" x="600" y="498">Email domain, company domain, status</text>
+
+  <path class="line" d="M600 516 L600 560"/>
+
+  <rect class="box" x="450" y="562" width="300" height="70"/>
+  <text class="label" x="600" y="591">Match customer records</text>
+  <text class="small" x="600" y="614">Unique business domain</text>
+
+  <path class="line" d="M600 632 L600 676"/>
+
+  <rect class="box" x="450" y="678" width="300" height="70"/>
+  <text class="label" x="600" y="707">Run detection rules</text>
+  <text class="small" x="600" y="730">Status mismatch or missing record</text>
+
+  <path class="line" d="M600 748 L600 792"/>
+  <text class="edge" x="675" y="775">Open or resolve</text>
+
+  <rect class="accent" x="450" y="794" width="300" height="72"/>
+  <text class="label" x="600" y="823">Findings with evidence</text>
+  <text class="small" x="600" y="847">Shown in the dashboard</text>
+
+  <rect class="store" x="42" y="174" width="230" height="72"/>
+  <text class="label" x="157" y="204">Redis</text>
+  <text class="small" x="157" y="228">Login rate limiting</text>
+  <path class="dash" d="M450 210 L272 210"/>
+
+  <rect class="store" x="928" y="562" width="230" height="82"/>
+  <text class="label" x="1043" y="596">PostgreSQL</text>
+  <text class="small" x="1043" y="620">Users, integrations, facts, findings</text>
+  <path class="dash" d="M750 210 L1043 210 L1043 562"/>
+  <text class="edge" x="1043" y="414" transform="rotate(-90 1043 414)">Read and write application data</text>
+  <path class="dash" d="M750 842 L1070 842 L1070 644"/>
+
+  <path class="line" d="M750 814 L1180 814 L1180 91 L725 91"/>
+  <text class="edge" x="1160" y="474" transform="rotate(-90 1160 474)">Findings response</text>
+</svg>
