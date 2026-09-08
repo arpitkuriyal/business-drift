@@ -1,6 +1,6 @@
 # Business Drift web
 
-This React and TypeScript app is the review dashboard for the Business Drift API.
+This React, TypeScript, and Tailwind CSS app is the review dashboard for the Business Drift API.
 
 ```bash
 npm install

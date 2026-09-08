@@ -69,7 +69,7 @@ business-drift/
 ├── internal/integrations/hubspot/   HubSpot connection, sync, and matching
 ├── internal/platform/               database, encryption, HTTP, and logging
 ├── migrations/                      PostgreSQL migrations
-├── web/                             React application
+├── web/                             React, TypeScript, and Tailwind application
 ├── docs/architecture.svg            architecture diagram
 ├── compose.yaml                     local services
 └── LICENSE                          MIT License
