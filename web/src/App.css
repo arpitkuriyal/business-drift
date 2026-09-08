@@ -279,6 +279,7 @@ input:focus { border-color: #39745f; box-shadow: 0 0 0 3px rgba(57, 116, 95, 0.1
 .metric-card.lime { color: #14201c; background: #c9f269; border-color: #c9f269; }
 .metric-card.lime::after { background: rgba(255, 255, 255, 0.3); }
 .metric-card.coral::after { background: #ffe3da; }
+.metric-card.amber::after { background: #fff0cf; }
 .metric-card span { color: #65726d; font-size: 12px; font-weight: 800; }
 .metric-card.lime span { color: #42542f; }
 .metric-card strong { position: relative; z-index: 1; align-self: center; font-size: clamp(28px, 3vw, 42px); font-weight: 650; letter-spacing: -0.04em; text-transform: capitalize; }
@@ -399,7 +400,6 @@ select:focus { border-color: #39745f; box-shadow: 0 0 0 3px rgba(57, 116, 95, 0.
   .workspace-header .eyebrow { display: none; }
   .workspace-header h1 { font-size: 24px; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metric-card:last-child { grid-column: 1 / -1; }
   .finding-row { grid-template-columns: 8px minmax(0, 1fr) 16px; }
   .finding-row .status-pill { display: none; }
   .section-heading { align-items: flex-start; }

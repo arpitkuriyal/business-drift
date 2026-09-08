@@ -36,6 +36,14 @@ function integrationStatus(status?: string) {
   return status
 }
 
+function ruleLabel(ruleName: string) {
+  return {
+    status_mismatch: 'Status mismatch',
+    missing_in_hubspot: 'Missing in HubSpot',
+    missing_in_stripe: 'Missing in Stripe',
+  }[ruleName] ?? ruleName.replaceAll('_', ' ')
+}
+
 function initials(value: string) {
   return value
     .split(/\s+/)
@@ -189,7 +197,7 @@ function NavButton({ active, label, mark, count, onClick }: { active: boolean; l
 
 function viewTitle(view: View) {
   return {
-    overview: 'Revenue health overview',
+    overview: 'Customer drift overview',
     findings: 'Review findings',
     stripe: 'Stripe integration',
     hubspot: 'HubSpot integration',
@@ -204,15 +212,17 @@ function Overview({ findings, stripe, hubSpot, onSeeFindings, onOpenFinding }: {
   onOpenFinding: (id: string) => void
 }) {
   const open = findings.filter((finding) => finding.status === 'open')
-  const highRisk = open.filter((finding) => finding.risk === 'high')
+  const statusMismatches = open.filter((finding) => finding.rule_name === 'status_mismatch')
+  const missingRecords = open.filter((finding) => finding.rule_name.startsWith('missing_in_'))
+  const connectedSources = [stripe, hubSpot].filter((integration) => integration?.status === 'active').length
 
   return (
     <div className="content-stack">
       <section className="metric-grid" aria-label="Workspace metrics">
         <MetricCard label="Open findings" value={String(open.length)} note="Need review" tone="lime" />
-        <MetricCard label="High risk" value={String(highRisk.length)} note="Prioritize these" tone="coral" />
-        <MetricCard label="Stripe" value={integrationStatus(stripe?.status)} note={stripe ? `Synced ${formatDate(stripe.last_synced_at)}` : 'Add sandbox credentials'} />
-        <MetricCard label="HubSpot" value={integrationStatus(hubSpot?.status)} note={hubSpot ? `Synced ${formatDate(hubSpot.last_synced_at)}` : 'Add a private-app token'} />
+        <MetricCard label="Status mismatches" value={String(statusMismatches.length)} note="Different customer states" tone="coral" />
+        <MetricCard label="Missing records" value={String(missingRecords.length)} note="Present in only one source" tone="amber" />
+        <MetricCard label="Sources connected" value={`${connectedSources}/2`} note={connectedSources === 2 ? 'Stripe and HubSpot ready' : 'Connect both data sources'} />
       </section>
 
       <section className="surface">
@@ -248,7 +258,7 @@ function FindingsView({ findings, onOpenFinding }: { findings: Finding[]; onOpen
       <div className="section-heading findings-heading">
         <div>
           <p className="eyebrow">Evidence-backed</p>
-          <h2>Customer mismatches</h2>
+          <h2>Customer drift findings</h2>
         </div>
         <div className="filter-group" aria-label="Filter findings">
           {(['open', 'resolved', 'all'] as const).map((option) => (
@@ -265,7 +275,7 @@ function FindingsView({ findings, onOpenFinding }: { findings: Finding[]; onOpen
 
 function FindingRows({ findings, onOpenFinding }: { findings: Finding[]; onOpenFinding: (id: string) => void }) {
   if (findings.length === 0) {
-    return <EmptyState title="No findings here" body="Ingest demo data or sync Stripe to evaluate customer state." />
+    return <EmptyState title="No findings here" body="Sync Stripe first, then HubSpot to compare customer records." />
   }
 
   return (
@@ -275,7 +285,7 @@ function FindingRows({ findings, onOpenFinding }: { findings: Finding[]; onOpenF
           <span className={`risk-dot ${finding.risk}`} aria-label={`${finding.risk} risk`} />
           <span className="finding-main">
             <strong>{finding.title}</strong>
-            <small>{finding.customer_name} · {finding.rule_name}</small>
+            <small>{finding.customer_name} · {ruleLabel(finding.rule_name)}</small>
           </span>
           <span className={`status-pill ${finding.status}`}>{finding.status}</span>
           <time>{formatDate(finding.last_detected_at)}</time>
@@ -406,7 +416,7 @@ function HubSpotView({ integration, canManage, onChanged, onSynced }: {
     setMessage('')
     try {
       const result = await syncHubSpot()
-      setMessage(`Imported ${result.companies} companies, matched ${result.matched} to Stripe, and detected ${result.findings} mismatches.`)
+      setMessage(`Imported ${result.companies} companies, matched ${result.matched} to Stripe, and detected ${result.findings} findings.`)
       await onSynced()
     } catch (requestError) {
       setError(messageFrom(requestError))
@@ -422,7 +432,7 @@ function HubSpotView({ integration, canManage, onChanged, onSynced }: {
         <div>
           <p className="eyebrow">CRM source</p>
           <h2>HubSpot</h2>
-          <p className="muted">Import companies and compare their customer status with Stripe.</p>
+          <p className="muted">Import companies, match customer records, and detect status or presence differences.</p>
         </div>
         <dl className="detail-list">
           <div><dt>Status</dt><dd><span className={`status-pill ${integration?.status === 'active' ? 'resolved' : 'open'}`}>{integrationStatus(integration?.status)}</span></dd></div>
@@ -464,7 +474,7 @@ function FindingPanel({ finding, onClose }: { finding: Finding; onClose: () => v
         <p className="drawer-explanation">{finding.explanation}</p>
         <dl className="detail-list">
           <div><dt>Customer</dt><dd>{finding.customer_name}</dd></div>
-          <div><dt>Rule</dt><dd>{finding.rule_name} v{finding.rule_version}</dd></div>
+          <div><dt>Rule</dt><dd>{ruleLabel(finding.rule_name)} · v{finding.rule_version}</dd></div>
           <div><dt>First detected</dt><dd>{formatDate(finding.first_detected_at)}</dd></div>
           <div><dt>Last detected</dt><dd>{formatDate(finding.last_detected_at)}</dd></div>
         </dl>
