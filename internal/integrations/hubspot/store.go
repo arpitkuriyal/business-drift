@@ -2,8 +2,6 @@ package hubspotintegration
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -22,6 +20,9 @@ func (s *Service) storeCompany(ctx context.Context, organizationID string, compa
 		return false, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := detection.LockOrganization(ctx, tx, organizationID); err != nil {
+		return false, 0, err
+	}
 	customerID, matched, err := resolveCustomer(ctx, tx, organizationID, company)
 	if err != nil {
 		return false, 0, err
@@ -40,8 +41,8 @@ func (s *Service) storeCompany(ctx context.Context, organizationID string, compa
 		HasHubSpot:   true,
 	})
 	if missing != nil {
-		created, err := upsertFinding(ctx, tx, organizationID, customerID, missing, company.ObservedAt, []findingEvidence{
-			{source: "hubspot", factType: "hubspot.company.domain", value: company.Domain, at: company.ObservedAt},
+		created, err := detection.UpsertFinding(ctx, tx, organizationID, customerID, missing, company.ObservedAt, []detection.Evidence{
+			{Source: "hubspot", FactType: "hubspot.company.domain", Value: company.Domain, At: company.ObservedAt},
 		})
 		if err != nil {
 			return false, 0, err
@@ -50,15 +51,15 @@ func (s *Service) storeCompany(ctx context.Context, organizationID string, compa
 			findingCount++
 		}
 	} else {
-		if err := resolveFinding(ctx, tx, organizationID, customerID, detection.MissingInHubSpotRuleName, company.ObservedAt); err != nil {
+		if err := detection.ResolveFinding(ctx, tx, organizationID, customerID, detection.MissingInHubSpotRuleName, company.ObservedAt); err != nil {
 			return false, 0, err
 		}
-		if err := resolveFinding(ctx, tx, organizationID, customerID, detection.MissingInStripeRuleName, company.ObservedAt); err != nil {
+		if err := detection.ResolveFinding(ctx, tx, organizationID, customerID, detection.MissingInStripeRuleName, company.ObservedAt); err != nil {
 			return false, 0, err
 		}
 	}
 
-	statusFinding, err := compareStatus(ctx, tx, organizationID, customerID, company)
+	statusFinding, err := detection.CompareStatus(ctx, tx, organizationID, customerID)
 	if err != nil {
 		return false, 0, err
 	}
@@ -141,40 +142,13 @@ func hasStripe(ctx context.Context, tx pgx.Tx, organizationID, customerID string
 	return exists
 }
 
-func compareStatus(ctx context.Context, tx pgx.Tx, organizationID, customerID string, company companyRecord) (bool, error) {
-	var stripeStatus string
-	var stripeObservedAt time.Time
-	err := tx.QueryRow(ctx, `
-		SELECT value #>> '{}', observed_at FROM customer_facts
-		WHERE organization_id = $1 AND customer_id = $2
-		  AND source = 'stripe' AND fact_type = 'stripe.subscription.status'
-	`, organizationID, customerID).Scan(&stripeStatus, &stripeObservedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	name := firstNonEmpty(company.Name, company.Domain, company.ID)
-	candidate := detection.EvaluateStatusMismatch(detection.CustomerSnapshot{
-		CustomerName: name, StripeSubscriptionStatus: stripeStatus, HubSpotCustomerStatus: company.Status,
-	})
-	if candidate == nil {
-		return false, resolveFinding(ctx, tx, organizationID, customerID, detection.StatusMismatchRuleName, company.ObservedAt)
-	}
-
-	return upsertFinding(ctx, tx, organizationID, customerID, candidate, company.ObservedAt, []findingEvidence{
-		{source: "stripe", factType: "stripe.subscription.status", value: stripeStatus, at: stripeObservedAt},
-		{source: "hubspot", factType: "hubspot.customer.status", value: company.Status, at: company.ObservedAt},
-	})
-}
-
 func saveHubSpotFact(ctx context.Context, tx pgx.Tx, organizationID, customerID, factType, value string, observedAt time.Time) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO customer_facts (organization_id, customer_id, source, fact_type, value, observed_at, schema_version)
 		VALUES ($1, $2, 'hubspot', $3, to_jsonb($4::text), $5, 1)
 		ON CONFLICT (organization_id, customer_id, source, fact_type)
 		DO UPDATE SET value = EXCLUDED.value, observed_at = EXCLUDED.observed_at, updated_at = now()
+		WHERE customer_facts.observed_at <= EXCLUDED.observed_at
 	`, organizationID, customerID, factType, value, observedAt)
 	return err
 }
@@ -186,9 +160,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return "Customer"
-}
-
-func hashParts(parts ...string) string {
-	hash := sha256.Sum256([]byte(strings.Join(parts, "|")))
-	return hex.EncodeToString(hash[:])
 }
