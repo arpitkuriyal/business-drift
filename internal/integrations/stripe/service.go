@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	stripe "github.com/stripe/stripe-go/v86"
 
 	"github.com/arpitkuriyal/business-drift/internal/auth"
 	"github.com/arpitkuriyal/business-drift/internal/platform/encryption"
@@ -32,15 +33,16 @@ type SyncResult struct {
 }
 
 type Service struct {
-	database *pgxpool.Pool
-	cipher   *encryption.Cipher
+	database  *pgxpool.Pool
+	cipher    *encryption.Cipher
+	newClient func(string) *stripe.Client
 }
 
 func NewService(database *pgxpool.Pool, cipher *encryption.Cipher) *Service {
-	return &Service{database: database, cipher: cipher}
+	return &Service{database: database, cipher: cipher, newClient: func(key string) *stripe.Client { return stripe.NewClient(key) }}
 }
 
-func (s *Service) Save(ctx context.Context, identity auth.Identity, apiKey string) (Integration, error) {
+func (s *Service) Save(ctx context.Context, identity auth.Identity, apiKey string, webhookSecrets ...string) (Integration, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if !strings.HasPrefix(apiKey, "sk_test_") && !strings.HasPrefix(apiKey, "rk_test_") {
 		return Integration{}, ErrInvalidSecret
@@ -49,8 +51,14 @@ func (s *Service) Save(ctx context.Context, identity auth.Identity, apiKey strin
 	if err != nil {
 		return Integration{}, err
 	}
-	// The old schema keeps this column; the minimal sync does not use webhooks.
-	encryptedEmpty, err := s.cipher.Encrypt("")
+	secret := ""
+	if len(webhookSecrets) > 0 {
+		secret = strings.TrimSpace(webhookSecrets[0])
+	}
+	if secret != "" && (!strings.HasPrefix(secret, "whsec_") || len(secret) <= 6 || len(secret) > 500) {
+		return Integration{}, ErrInvalidSecret
+	}
+	encryptedSecret, err := s.cipher.Encrypt(secret)
 	if err != nil {
 		return Integration{}, err
 	}
@@ -60,9 +68,10 @@ func (s *Service) Save(ctx context.Context, identity auth.Identity, apiKey strin
 		VALUES ($1, 'stripe', $2, $3, 'active')
 		ON CONFLICT (organization_id, provider) DO UPDATE SET
 			api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+			webhook_secret_ciphertext = CASE WHEN $4 THEN EXCLUDED.webhook_secret_ciphertext ELSE integrations.webhook_secret_ciphertext END,
 			status = 'active', last_error = NULL, updated_at = now()
 		RETURNING id, status, last_synced_at, last_error
-	`, identity.OrganizationID, encryptedKey, encryptedEmpty).Scan(
+	`, identity.OrganizationID, encryptedKey, encryptedSecret, secret != "").Scan(
 		&integration.ID, &integration.Status, &integration.LastSyncedAt, &integration.LastError,
 	)
 	return integration, err
