@@ -7,12 +7,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arpitkuriyal/business-drift/internal/detection"
 	"github.com/jackc/pgx/v5"
 	stripe "github.com/stripe/stripe-go/v86"
 )
 
 func (s *Service) syncAll(ctx context.Context, organizationID, apiKey string) (SyncResult, error) {
-	client := stripe.NewClient(apiKey)
+	tx, err := s.database.Begin(ctx)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := detection.LockOrganization(ctx, tx, organizationID); err != nil {
+		return SyncResult{}, err
+	}
+	client := s.newClient(apiKey)
 	result := SyncResult{}
 	customers := &stripe.CustomerListParams{}
 	customers.Limit = stripe.Int64(100)
@@ -20,7 +29,7 @@ func (s *Service) syncAll(ctx context.Context, organizationID, apiKey string) (S
 		if err != nil {
 			return result, fmt.Errorf("list Stripe customers: %w", err)
 		}
-		if err := s.saveCustomer(ctx, organizationID, customer.ID, customer.Name, customer.Email); err != nil {
+		if err := saveCustomer(ctx, tx, organizationID, customer.ID, customer.Name, customer.Email); err != nil {
 			return result, err
 		}
 		result.Customers++
@@ -29,6 +38,7 @@ func (s *Service) syncAll(ctx context.Context, organizationID, apiKey string) (S
 	subscriptions := &stripe.SubscriptionListParams{}
 	subscriptions.Limit = stripe.Int64(100)
 	subscriptions.Status = stripe.String("all")
+	byCustomer := make(map[string]*stripe.Subscription)
 	for subscription, err := range client.V1Subscriptions.List(ctx, subscriptions).All(ctx) {
 		if err != nil {
 			return result, fmt.Errorf("list Stripe subscriptions: %w", err)
@@ -36,20 +46,19 @@ func (s *Service) syncAll(ctx context.Context, organizationID, apiKey string) (S
 		if subscription.Customer == nil {
 			continue
 		}
-		if err := s.saveSubscription(ctx, organizationID, subscription.Customer.ID, string(subscription.Status)); err != nil {
-			return result, err
-		}
+		byCustomer[subscription.Customer.ID] = preferredSubscription(byCustomer[subscription.Customer.ID], subscription)
 		result.Subscriptions++
 	}
-	return result, nil
+	for customerID, subscription := range byCustomer {
+		if err := saveSubscription(ctx, tx, organizationID, customerID, string(subscription.Status)); err != nil {
+			return result, err
+		}
+	}
+
+	return result, tx.Commit(ctx)
 }
 
-func (s *Service) saveCustomer(ctx context.Context, organizationID, stripeID, name, email string) error {
-	tx, err := s.database.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
+func saveCustomer(ctx context.Context, tx pgx.Tx, organizationID, stripeID, name, email string) error {
 	customerID, err := ensureCustomer(ctx, tx, organizationID, stripeID, firstNonEmpty(name, email, stripeID))
 	if err != nil {
 		return err
@@ -65,15 +74,10 @@ func (s *Service) saveCustomer(ctx context.Context, organizationID, stripeID, na
 			}
 		}
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
-func (s *Service) saveSubscription(ctx context.Context, organizationID, stripeID, status string) error {
-	tx, err := s.database.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
+func saveSubscription(ctx context.Context, tx pgx.Tx, organizationID, stripeID, status string) error {
 	customerID, err := ensureCustomer(ctx, tx, organizationID, stripeID, stripeID)
 	if err != nil {
 		return err
@@ -81,7 +85,8 @@ func (s *Service) saveSubscription(ctx context.Context, organizationID, stripeID
 	if err := saveFact(ctx, tx, organizationID, customerID, "stripe.subscription.status", status); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	_, err = detection.CompareStatus(ctx, tx, organizationID, customerID)
+	return err
 }
 
 func ensureCustomer(ctx context.Context, tx pgx.Tx, organizationID, stripeID, name string) (string, error) {
@@ -91,7 +96,7 @@ func ensureCustomer(ctx context.Context, tx pgx.Tx, organizationID, stripeID, na
 		WHERE organization_id = $1 AND source = 'stripe' AND external_id = $2
 	`, organizationID, stripeID).Scan(&customerID)
 	if err == nil {
-		_, err = tx.Exec(ctx, `UPDATE canonical_customers SET name = $1, updated_at = now() WHERE id = $2`, name, customerID)
+		_, err = tx.Exec(ctx, `UPDATE canonical_customers SET name = CASE WHEN $1 = $3 THEN name ELSE $1 END, updated_at = now() WHERE id = $2`, name, customerID, stripeID)
 		return customerID, err
 	}
 	if err != pgx.ErrNoRows {
