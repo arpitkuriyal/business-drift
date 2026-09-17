@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/arpitkuriyal/business-drift/internal/auth"
+	"github.com/arpitkuriyal/business-drift/internal/integrations/jobs"
 )
 
 const maxConfigurationBodyBytes = 16 * 1024
@@ -56,16 +57,16 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Sync(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.IdentityFromContext(r.Context())
-	result, err := h.service.Sync(r.Context(), identity)
-	if errors.Is(err, ErrNotFound) {
+	result, err := jobs.EnqueueSync(r.Context(), h.service.database, identity.OrganizationID, "hubspot")
+	if errors.Is(err, jobs.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "hubspot_not_configured", "Configure HubSpot before starting a sync.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "hubspot_sync_failed", "HubSpot companies could not be synchronized.")
+		writeError(w, http.StatusServiceUnavailable, "hubspot_sync_failed", "HubSpot companies could not be queued.")
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusAccepted, result)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {

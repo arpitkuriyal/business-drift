@@ -7,6 +7,7 @@ import (
 	"github.com/arpitkuriyal/business-drift/internal/auth"
 	"github.com/arpitkuriyal/business-drift/internal/findings"
 	hubspotintegration "github.com/arpitkuriyal/business-drift/internal/integrations/hubspot"
+	"github.com/arpitkuriyal/business-drift/internal/integrations/jobs"
 	stripeintegration "github.com/arpitkuriyal/business-drift/internal/integrations/stripe"
 	"github.com/arpitkuriyal/business-drift/internal/organizations"
 	"github.com/arpitkuriyal/business-drift/internal/platform/database"
@@ -39,7 +40,10 @@ func NewRouter(logger *zap.Logger, resources *database.Resources, stripeService 
 		authService.RequireAuthentication(http.HandlerFunc(findingsHandler.Get)),
 	)
 
+	mux.Handle("GET /api/v1/integration-jobs/{id}", authService.RequireAuthentication(jobs.GetHandler(resources.Postgres)))
+
 	stripeHandler := stripeintegration.NewHandler(stripeService)
+	mux.HandleFunc("POST /api/v1/webhooks/stripe/{integrationID}", stripeHandler.Webhook)
 	mux.Handle(
 		"POST /api/v1/integrations/stripe",
 		authService.RequireAuthentication(auth.RequireOwner(http.HandlerFunc(stripeHandler.Save))),

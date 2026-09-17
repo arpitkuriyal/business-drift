@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/arpitkuriyal/business-drift/internal/auth"
+	"github.com/arpitkuriyal/business-drift/internal/integrations/jobs"
 )
 
 const maxConfigurationBodyBytes = 16 * 1024
@@ -21,16 +22,17 @@ func NewHandler(service *Service) *Handler {
 
 func (h *Handler) Save(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		APIKey string `json:"api_key"`
+		APIKey        string `json:"api_key"`
+		WebhookSecret string `json:"webhook_secret"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	identity, _ := auth.IdentityFromContext(r.Context())
-	integration, err := h.service.Save(r.Context(), identity, input.APIKey)
+	integration, err := h.service.Save(r.Context(), identity, input.APIKey, input.WebhookSecret)
 	if errors.Is(err, ErrInvalidSecret) {
-		writeError(w, http.StatusBadRequest, "invalid_stripe_credentials", "A Stripe test API key is required.")
+		writeError(w, http.StatusBadRequest, "invalid_stripe_credentials", "A Stripe test API key and, when supplied, a whsec_ signing secret are required.")
 		return
 	}
 	if err != nil {
@@ -56,16 +58,16 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Sync(w http.ResponseWriter, r *http.Request) {
 	identity, _ := auth.IdentityFromContext(r.Context())
-	result, err := h.service.Sync(r.Context(), identity)
-	if errors.Is(err, ErrNotFound) {
+	result, err := jobs.EnqueueSync(r.Context(), h.service.database, identity.OrganizationID, "stripe")
+	if errors.Is(err, jobs.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "stripe_not_configured", "Configure Stripe before starting a sync.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "stripe_sync_failed", "Stripe customers could not be synchronized.")
+		writeError(w, http.StatusServiceUnavailable, "stripe_sync_failed", "Stripe customers could not be queued.")
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusAccepted, result)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {

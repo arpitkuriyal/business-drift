@@ -9,7 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/arpitkuriyal/business-drift/internal/auth"
 	hubspotintegration "github.com/arpitkuriyal/business-drift/internal/integrations/hubspot"
+	"github.com/arpitkuriyal/business-drift/internal/integrations/jobs"
 	stripeintegration "github.com/arpitkuriyal/business-drift/internal/integrations/stripe"
 	"github.com/arpitkuriyal/business-drift/internal/platform/config"
 	"github.com/arpitkuriyal/business-drift/internal/platform/database"
@@ -46,6 +48,24 @@ func main() {
 
 	shutdownSignal, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	workerCtx, stopWorker := context.WithCancel(shutdownSignal)
+	workerDone := make(chan struct{})
+	go func() { defer close(workerDone); stripeService.RunWorker(workerCtx, logger) }()
+	syncDone := make(chan struct{})
+	go func() {
+		defer close(syncDone)
+		jobs.Run(workerCtx, resources.Postgres, logger, map[string]jobs.Runner{
+			"stripe_sync": func(ctx context.Context, org string) error {
+				_, err := stripeService.Sync(ctx, auth.Identity{OrganizationID: org})
+				return err
+			},
+			"hubspot_sync": func(ctx context.Context, org string) error {
+				_, err := hubSpotService.Sync(ctx, auth.Identity{OrganizationID: org})
+				return err
+			},
+		})
+	}()
+	defer func() { stopWorker(); <-workerDone; <-syncDone }()
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
