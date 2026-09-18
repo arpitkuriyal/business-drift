@@ -9,6 +9,7 @@ import {
   saveStripe,
   syncHubSpot,
   syncStripe,
+  waitForIntegrationJob,
 } from '../api'
 import type { Finding, HubSpotIntegration, Identity, Organization, StripeIntegration } from '../types'
 
@@ -108,8 +109,24 @@ export function Dashboard({ identity, onLogout }: Props) {
         if (!cancelled) setLoading(false)
       })
 
+    let refreshing = false
+    const refresh = window.setInterval(() => {
+      if (document.hidden || refreshing) return
+      refreshing = true
+      void Promise.all([getFindings(), getStripe(), getHubSpot()])
+        .then(([result, stripeResult, hubSpotResult]) => {
+          if (cancelled) return
+          setFindings(result.data)
+          setStripe(stripeResult)
+          setHubSpot(hubSpotResult)
+        })
+        .catch((requestError: unknown) => { if (!cancelled) setError(messageFrom(requestError)) })
+        .finally(() => { refreshing = false })
+    }, 10000)
+
     return () => {
       cancelled = true
+      window.clearInterval(refresh)
     }
   }, [])
 
@@ -331,6 +348,7 @@ function StripeView({ integration, canManage, onChanged }: {
     try {
       const result = await saveStripe({
         api_key: String(values.get('api_key') ?? ''),
+        webhook_secret: String(values.get('webhook_secret') ?? ''),
       })
       onChanged(result)
       form.reset()
@@ -348,7 +366,11 @@ function StripeView({ integration, canManage, onChanged }: {
     setMessage('')
     try {
       const result = await syncStripe()
-      setMessage(`Imported ${result.customers} customers and ${result.subscriptions} subscriptions.`)
+      setMessage('Stripe sync queued. Importing in the background…')
+      await waitForIntegrationJob(result.id)
+      const updated = await getStripe()
+      if (updated) onChanged(updated)
+      setMessage('Stripe sync completed.')
     } catch (requestError) {
       setError(messageFrom(requestError))
     } finally {
@@ -363,7 +385,7 @@ function StripeView({ integration, canManage, onChanged }: {
         <div>
           <p className={eyebrowClass}>Billing source</p>
           <h2 className="m-0 text-[23px] font-semibold tracking-[-0.035em] text-[#18231f]">Stripe sandbox</h2>
-          <p className="m-0 leading-relaxed text-[#74807c]">Import customers and subscriptions from Stripe test mode.</p>
+          <p className="m-0 leading-relaxed text-[#74807c]">Sync once to import Stripe test data, then use webhooks to keep subscription status current.</p>
         </div>
         <dl className="m-0 grid">
           <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-4 border-t border-[#eceae4] py-3 sm:grid-cols-[120px_minmax(0,1fr)]"><dt className="text-[11px] text-[#7b8681]">Status</dt><dd className="m-0 min-w-0 text-xs font-bold text-[#293732]"><span className={`inline-flex w-fit rounded-full px-2 py-1 text-[10px] font-extrabold capitalize ${integration?.status === 'active' ? 'bg-[#e5f2e9] text-[#426657]' : 'bg-[#ffe6de] text-[#81402f]'}`}>{integrationStatus(integration?.status)}</span></dd></div>
@@ -383,6 +405,9 @@ function StripeView({ integration, canManage, onChanged }: {
           <form className="grid gap-4.5" onSubmit={handleSave}>
             <p className="m-0 leading-relaxed text-[#74807c]">Only test keys are accepted. The backend encrypts the key.</p>
             <label className={labelClass}>Sandbox API key<input className={inputClass} name="api_key" type="password" placeholder="sk_test_…" autoComplete="off" required /></label>
+            <label className={labelClass}>Webhook signing secret<input className={inputClass} name="webhook_secret" type="password" placeholder="whsec_…" autoComplete="off" /></label>
+            <p className="m-0 text-sm text-[#74807c]">Leave blank to keep the existing secret. Use manual sync for the initial import and reconciliation.</p>
+            {integration && <p className="m-0 break-all text-sm text-[#74807c]">Webhook endpoint: <code>/api/v1/webhooks/stripe/{integration.id}</code>. Register this path on your public backend URL for subscription created, updated, and deleted events.</p>}
             {error && <p className="m-0 rounded-[10px] bg-[#fff0ed] px-3.5 py-3 text-[13px] leading-relaxed text-[#8c2f2f]" role="alert">{error}</p>}
             {message && <p className="m-0 rounded-[10px] bg-[#ecf8ed] px-3.5 py-3 text-[13px] leading-relaxed text-[#245c48]" role="status">{message}</p>}
             <button className={primaryButtonClass} type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save configuration'}</button>
@@ -432,7 +457,9 @@ function HubSpotView({ integration, canManage, onChanged, onSynced }: {
     setMessage('')
     try {
       const result = await syncHubSpot()
-      setMessage(`Imported ${result.companies} companies, matched ${result.matched} to Stripe, and detected ${result.findings} findings.`)
+      setMessage('HubSpot sync queued. Importing and comparing in the background…')
+      await waitForIntegrationJob(result.id)
+      setMessage('HubSpot sync completed.')
       await onSynced()
     } catch (requestError) {
       setError(messageFrom(requestError))

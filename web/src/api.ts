@@ -1,7 +1,7 @@
 import type {
   Finding,
   HubSpotIntegration,
-  HubSpotSyncResult,
+  IntegrationJob,
   Identity,
   Organization,
   Session,
@@ -106,11 +106,11 @@ export async function getStripe(): Promise<StripeIntegration | null> {
   }
 }
 
-export const saveStripe = (input: { api_key: string }) =>
+export const saveStripe = (input: { api_key: string; webhook_secret?: string }) =>
   request<StripeIntegration>('/api/v1/integrations/stripe', { method: 'POST', body: JSON.stringify(input) })
 
 export const syncStripe = () =>
-  request<{ customers: number; subscriptions: number }>('/api/v1/integrations/stripe/sync', { method: 'POST' })
+  request<IntegrationJob>('/api/v1/integrations/stripe/sync', { method: 'POST' })
 
 export async function getHubSpot(): Promise<HubSpotIntegration | null> {
   try {
@@ -125,7 +125,7 @@ export const saveHubSpot = (input: { access_token: string }) =>
   request<HubSpotIntegration>('/api/v1/integrations/hubspot', { method: 'POST', body: JSON.stringify(input) })
 
 export const syncHubSpot = () =>
-  request<HubSpotSyncResult>('/api/v1/integrations/hubspot/sync', { method: 'POST' })
+  request<IntegrationJob>('/api/v1/integrations/hubspot/sync', { method: 'POST' })
 
 export async function logout() {
   const session = loadSession()
@@ -137,4 +137,15 @@ export async function logout() {
     ).catch(() => undefined)
   }
   saveSession(null)
+}
+
+export async function waitForIntegrationJob(id: string): Promise<void> {
+  const deadline = Date.now() + 10 * 60 * 1000
+  while (Date.now() < deadline) {
+    const job = await request<IntegrationJob>(`/api/v1/integration-jobs/${id}`)
+    if (job.status === 'completed') return
+    if (job.status === 'failed') throw new Error(job.last_error ?? 'Sync failed; the worker will retry automatically.')
+    await new Promise((resolve) => window.setTimeout(resolve, 1500))
+  }
+  throw new Error('Sync is still queued or running. You can leave this page; processing continues in the background.')
 }

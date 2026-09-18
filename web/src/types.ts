@@ -56,8 +56,11 @@ export type HubSpotIntegration = {
   last_error?: string
 }
 
-export type HubSpotSyncResult = {
-  companies: number
-  matched: number
-  findings: number
+export type IntegrationJob = {
+  id: string
+  kind: 'stripe_sync' | 'hubspot_sync' | 'stripe_event'
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  attempts: number
+  last_error?: string
+  updated_at: string
 }
