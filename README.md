@@ -16,7 +16,8 @@ Finding: Acme is cancelled in Stripe but active in HubSpot.
 ## What it does
 
 - Connects to Stripe sandbox and HubSpot.
-- Imports customers, subscriptions, companies, and lifecycle stages.
+- Imports customers, subscriptions, companies, and lifecycle stages through durable background jobs.
+- Verifies Stripe subscription webhooks, deduplicates deliveries, and automatically refreshes customer status.
 - Matches Stripe customers with HubSpot companies by business domain.
 - Detects incorrect customer status in both directions.
 - Detects customers missing from either system.
@@ -32,7 +33,7 @@ Stripe sync -> HubSpot sync -> normalize data -> match by domain
             -> run rules -> create or resolve findings -> show evidence
 ```
 
-Sync Stripe before HubSpot. The HubSpot sync matches the imported records and runs the detection rules.
+Wait for the initial Stripe sync to complete before syncing HubSpot. Imports run in background workers inside the API process. HubSpot matches the imported records; both sources run the shared status detector. Stripe subscription webhooks keep subsequent billing changes current. HubSpot changes still require reconciliation sync in this MVP.
 
 ## Customer matching
 
@@ -65,8 +66,9 @@ business-drift/
 ├── internal/auth/                   registration, login, sessions, and roles
 ├── internal/detection/              comparison rules
 ├── internal/findings/               finding API and database queries
-├── internal/integrations/stripe/    Stripe connection and sync
+├── internal/integrations/stripe/    Stripe connection, webhooks, and sync
 ├── internal/integrations/hubspot/   HubSpot connection, sync, and matching
+├── internal/integrations/jobs/      durable sync queue and job status
 ├── internal/platform/               database, encryption, HTTP, and logging
 ├── migrations/                      PostgreSQL migrations
 ├── web/                             React, TypeScript, and Tailwind application
@@ -146,6 +148,31 @@ Never use a real card or live Stripe key for this demo.
 
 Do not share or commit the Stripe key or HubSpot token.
 
+## Automatic Stripe updates
+
+1. Apply migrations with `make migrate-up` and restart the API. Both workers start automatically with the API; PostgreSQL is the durable queue, so Redis notifications are not required.
+2. Save a Stripe test API key. Copy the integration ID from the Stripe screen or `GET /api/v1/integrations/stripe`.
+3. Register `https://<backend-host>/api/v1/webhooks/stripe/<integration-id>` in Stripe for your account's test-mode `customer.subscription.created`, `customer.subscription.updated`, and `customer.subscription.deleted` snapshot events.
+4. Save that endpoint's `whsec_...` signing secret alongside your API key in the Stripe screen. It is encrypted in the database and never returned by the API. Leaving the field blank preserves the existing secret.
+5. Complete an initial Stripe sync, then a HubSpot sync. Subsequent subscription changes arrive automatically; the dashboard refreshes findings and integration status every ten seconds while visible.
+
+For local forwarding, run:
+
+```bash
+stripe listen --events customer.subscription.created,customer.subscription.updated,customer.subscription.deleted \
+  --forward-to localhost:8080/api/v1/webhooks/stripe/<integration-id>
+```
+
+Use the signing secret printed by this command for local testing. See [Stripe's webhook setup guide](https://docs.stripe.com/webhooks).
+
+The receiver verifies the original request bytes and signature timestamp before ingestion. Supported test-account events and their jobs commit in one transaction before HTTP 204 is returned. Repeated event IDs within an organization are acknowledged without another job. Invalid signatures receive 400; oversized bodies receive 413; storage failures receive 503 so delivery can be retried. Other signed event types are acknowledged without work. Live-mode and Connect events are outside this test-mode MVP.
+
+A worker locks one job with `FOR UPDATE SKIP LOCKED`, fetches the latest Stripe subscription/customer state, and commits facts, detection evidence, and completion together. Fetches and writes serialize per organization with reconciliation updates, preventing an old event snapshot from overwriting newer state. If a customer has multiple subscriptions, active/trialing subscriptions take precedence; otherwise the newest subscription determines status. Provider failures retry with exponential backoff capped at 512 seconds. A crash releases transaction locks and leaves the job available for replay.
+
+Manual sync endpoints return HTTP 202 with a job ID. Repeated requests reuse an outstanding sync, including a failed job awaiting retry. Read `/api/v1/integration-jobs/<id>` to check `status`, `attempts`, and `last_error`; only members of the owning organization can read it. The UI waits for completion and reports retryable failures. Workers hold transaction locks while running, so a job remains visibly pending (or failed during a retry) until completion. Sync imports are idempotent and may replay after a crash; HubSpot may have committed some company updates before a failed attempt.
+
+Use manual sync for initial imports and occasional reconciliation. HubSpot webhook notifications are a follow-up; HubSpot sync already uses the shared detector to resolve findings after CRM status changes. Tenant isolation remains application-level plus tenant-aware foreign keys; this change does not introduce PostgreSQL RLS or claim a full security audit.
+
 ## API routes
 
 | Method | Path | Purpose |
@@ -157,11 +184,13 @@ Do not share or commit the Stripe key or HubSpot token.
 | `GET` | `/api/v1/auth/me` | Read the signed-in identity |
 | `GET` | `/api/v1/organization` | Read the current workspace |
 | `GET` | `/api/v1/integrations/stripe` | Read Stripe connection status |
-| `POST` | `/api/v1/integrations/stripe` | Save a Stripe test key |
-| `POST` | `/api/v1/integrations/stripe/sync` | Import Stripe data |
+| `POST` | `/api/v1/integrations/stripe` | Save a Stripe test key and optional webhook signing secret |
+| `POST` | `/api/v1/integrations/stripe/sync` | Queue Stripe import (202 + job) |
 | `GET` | `/api/v1/integrations/hubspot` | Read HubSpot connection status |
 | `POST` | `/api/v1/integrations/hubspot` | Save a HubSpot token |
-| `POST` | `/api/v1/integrations/hubspot/sync` | Import, match, and compare companies |
+| `POST` | `/api/v1/integrations/hubspot/sync` | Queue HubSpot import and comparison (202 + job) |
+| `POST` | `/api/v1/webhooks/stripe/{integrationID}` | Receive signed Stripe subscription events |
+| `GET` | `/api/v1/integration-jobs/{id}` | Read an organization-scoped job status |
 | `GET` | `/api/v1/findings` | List findings |
 | `GET` | `/api/v1/findings/{id}` | Read a finding and its evidence |
 | `GET` | `/live` | Check that the API is running |
