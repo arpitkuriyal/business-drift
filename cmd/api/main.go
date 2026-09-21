@@ -18,6 +18,7 @@ import (
 	"github.com/arpitkuriyal/business-drift/internal/platform/encryption"
 	"github.com/arpitkuriyal/business-drift/internal/platform/httpserver"
 	"github.com/arpitkuriyal/business-drift/internal/platform/logging"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 )
 
@@ -50,22 +51,25 @@ func main() {
 	defer stop()
 	workerCtx, stopWorker := context.WithCancel(shutdownSignal)
 	workerDone := make(chan struct{})
-	go func() { defer close(workerDone); stripeService.RunWorker(workerCtx, logger) }()
-	syncDone := make(chan struct{})
+
 	go func() {
-		defer close(syncDone)
-		jobs.Run(workerCtx, resources.Postgres, logger, map[string]jobs.Runner{
-			"stripe_sync": func(ctx context.Context, org string) error {
-				_, err := stripeService.Sync(ctx, auth.Identity{OrganizationID: org})
+		defer close(workerDone)
+		jobs.Run(workerCtx, resources.Postgres, logger, func(ctx context.Context, tx pgx.Tx, job jobs.Work) error {
+			switch job.Kind {
+			case "stripe_event":
+				return stripeService.ProcessWebhook(ctx, tx, job.OrganizationID, job.IntegrationID, job.Payload)
+			case "stripe_sync":
+				_, err := stripeService.Sync(ctx, auth.Identity{OrganizationID: job.OrganizationID})
 				return err
-			},
-			"hubspot_sync": func(ctx context.Context, org string) error {
-				_, err := hubSpotService.Sync(ctx, auth.Identity{OrganizationID: org})
+			case "hubspot_sync":
+				_, err := hubSpotService.Sync(ctx, auth.Identity{OrganizationID: job.OrganizationID})
 				return err
-			},
+			default:
+				return errors.New("unknown integration job")
+			}
 		})
 	}()
-	defer func() { stopWorker(); <-workerDone; <-syncDone }()
+	defer func() { stopWorker(); <-workerDone }()
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
