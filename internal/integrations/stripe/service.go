@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	stripe "github.com/stripe/stripe-go/v86"
 
 	"github.com/arpitkuriyal/business-drift/internal/auth"
 	"github.com/arpitkuriyal/business-drift/internal/platform/encryption"
@@ -33,16 +32,15 @@ type SyncResult struct {
 }
 
 type Service struct {
-	database  *pgxpool.Pool
-	cipher    *encryption.Cipher
-	newClient func(string) *stripe.Client
+	database *pgxpool.Pool
+	cipher   *encryption.Cipher
 }
 
 func NewService(database *pgxpool.Pool, cipher *encryption.Cipher) *Service {
-	return &Service{database: database, cipher: cipher, newClient: func(key string) *stripe.Client { return stripe.NewClient(key) }}
+	return &Service{database: database, cipher: cipher}
 }
 
-func (s *Service) Save(ctx context.Context, identity auth.Identity, apiKey string, webhookSecrets ...string) (Integration, error) {
+func (s *Service) Save(ctx context.Context, identity auth.Identity, apiKey, webhookSecret string) (Integration, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if !strings.HasPrefix(apiKey, "sk_test_") && !strings.HasPrefix(apiKey, "rk_test_") {
 		return Integration{}, ErrInvalidSecret
@@ -51,10 +49,7 @@ func (s *Service) Save(ctx context.Context, identity auth.Identity, apiKey strin
 	if err != nil {
 		return Integration{}, err
 	}
-	secret := ""
-	if len(webhookSecrets) > 0 {
-		secret = strings.TrimSpace(webhookSecrets[0])
-	}
+	secret := strings.TrimSpace(webhookSecret)
 	if secret != "" && (!strings.HasPrefix(secret, "whsec_") || len(secret) <= 6 || len(secret) > 500) {
 		return Integration{}, ErrInvalidSecret
 	}

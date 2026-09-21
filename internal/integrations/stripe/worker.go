@@ -112,7 +112,7 @@ func (s *Service) processEvent(ctx context.Context, tx pgx.Tx, org, key string, 
 	if err != nil {
 		return err
 	}
-	client := s.newClient(key)
+	client := stripe.NewClient(key)
 	subscription, err := client.V1Subscriptions.Retrieve(ctx, id, nil)
 	if err != nil {
 		return err

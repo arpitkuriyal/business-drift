@@ -21,7 +21,7 @@ func (s *Service) syncAll(ctx context.Context, organizationID, apiKey string) (S
 	if err := detection.LockOrganization(ctx, tx, organizationID); err != nil {
 		return SyncResult{}, err
 	}
-	client := s.newClient(apiKey)
+	client := stripe.NewClient(apiKey)
 	result := SyncResult{}
 	customers := &stripe.CustomerListParams{}
 	customers.Limit = stripe.Int64(100)
