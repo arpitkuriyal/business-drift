@@ -9,7 +9,6 @@ import {
   saveStripe,
   syncHubSpot,
   syncStripe,
-  waitForIntegrationJob,
 } from '../api'
 import type { Finding, HubSpotIntegration, Identity, Organization, StripeIntegration } from '../types'
 
@@ -197,7 +196,7 @@ export function Dashboard({ identity, onLogout }: Props) {
               <StripeView integration={stripe} canManage={canManage} onChanged={setStripe} />
             )}
             {view === 'hubspot' && (
-              <HubSpotView integration={hubSpot} canManage={canManage} onChanged={setHubSpot} onSynced={loadWorkspace} />
+              <HubSpotView integration={hubSpot} canManage={canManage} onChanged={setHubSpot} />
             )}
           </>
         )}
@@ -365,12 +364,8 @@ function StripeView({ integration, canManage, onChanged }: {
     setError('')
     setMessage('')
     try {
-      const result = await syncStripe()
-      setMessage('Stripe sync queued. Importing in the background…')
-      await waitForIntegrationJob(result.id)
-      const updated = await getStripe()
-      if (updated) onChanged(updated)
-      setMessage('Stripe sync completed.')
+      await syncStripe()
+      setMessage('Sync requested. The last sync time and findings will update automatically.')
     } catch (requestError) {
       setError(messageFrom(requestError))
     } finally {
@@ -391,6 +386,7 @@ function StripeView({ integration, canManage, onChanged }: {
           <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-4 border-t border-[#eceae4] py-3 sm:grid-cols-[120px_minmax(0,1fr)]"><dt className="text-[11px] text-[#7b8681]">Status</dt><dd className="m-0 min-w-0 text-xs font-bold text-[#293732]"><span className={`inline-flex w-fit rounded-full px-2 py-1 text-[10px] font-extrabold capitalize ${integration?.status === 'active' ? 'bg-[#e5f2e9] text-[#426657]' : 'bg-[#ffe6de] text-[#81402f]'}`}>{integrationStatus(integration?.status)}</span></dd></div>
           <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-4 border-t border-[#eceae4] py-3 sm:grid-cols-[120px_minmax(0,1fr)]"><dt className="text-[11px] text-[#7b8681]">Last sync</dt><dd className="m-0 min-w-0 text-xs font-bold text-[#293732]">{formatDate(integration?.last_synced_at)}</dd></div>
         </dl>
+        {integration?.status === 'error' && <p className="m-0 text-sm text-[#8c2f2f]" role="status">The last sync failed. The background worker will retry automatically.</p>}
         {integration && canManage && <button className={primaryButtonClass} type="button" onClick={() => void handleSync()} disabled={busy}>{busy ? 'Syncing…' : 'Sync Stripe'}</button>}
       </section>
 
@@ -420,11 +416,10 @@ function StripeView({ integration, canManage, onChanged }: {
   )
 }
 
-function HubSpotView({ integration, canManage, onChanged, onSynced }: {
+function HubSpotView({ integration, canManage, onChanged }: {
   integration: HubSpotIntegration | null
   canManage: boolean
   onChanged: (integration: HubSpotIntegration) => void
-  onSynced: () => Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
@@ -456,11 +451,8 @@ function HubSpotView({ integration, canManage, onChanged, onSynced }: {
     setError('')
     setMessage('')
     try {
-      const result = await syncHubSpot()
-      setMessage('HubSpot sync queued. Importing and comparing in the background…')
-      await waitForIntegrationJob(result.id)
-      setMessage('HubSpot sync completed.')
-      await onSynced()
+      await syncHubSpot()
+      setMessage('Sync requested. The last sync time and findings will update automatically.')
     } catch (requestError) {
       setError(messageFrom(requestError))
     } finally {
@@ -481,6 +473,7 @@ function HubSpotView({ integration, canManage, onChanged, onSynced }: {
           <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-4 border-t border-[#eceae4] py-3 sm:grid-cols-[120px_minmax(0,1fr)]"><dt className="text-[11px] text-[#7b8681]">Status</dt><dd className="m-0 min-w-0 text-xs font-bold text-[#293732]"><span className={`inline-flex w-fit rounded-full px-2 py-1 text-[10px] font-extrabold capitalize ${integration?.status === 'active' ? 'bg-[#e5f2e9] text-[#426657]' : 'bg-[#ffe6de] text-[#81402f]'}`}>{integrationStatus(integration?.status)}</span></dd></div>
           <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-4 border-t border-[#eceae4] py-3 sm:grid-cols-[120px_minmax(0,1fr)]"><dt className="text-[11px] text-[#7b8681]">Last sync</dt><dd className="m-0 min-w-0 text-xs font-bold text-[#293732]">{formatDate(integration?.last_synced_at)}</dd></div>
         </dl>
+        {integration?.status === 'error' && <p className="m-0 text-sm text-[#8c2f2f]" role="status">The last sync failed. The background worker will retry automatically.</p>}
         {integration && canManage && <button className={primaryButtonClass} type="button" onClick={() => void handleSync()} disabled={busy}>{busy ? 'Syncing…' : 'Sync HubSpot companies'}</button>}
         {message && <p className="m-0 rounded-[10px] bg-[#ecf8ed] px-3.5 py-3 text-[13px] leading-relaxed text-[#245c48]" role="status">{message}</p>}
         {error && <p className="m-0 rounded-[10px] bg-[#fff0ed] px-3.5 py-3 text-[13px] leading-relaxed text-[#8c2f2f]" role="alert">{error}</p>}

@@ -138,14 +138,3 @@ export async function logout() {
   }
   saveSession(null)
 }
-
-export async function waitForIntegrationJob(id: string): Promise<void> {
-  const deadline = Date.now() + 10 * 60 * 1000
-  while (Date.now() < deadline) {
-    const job = await request<IntegrationJob>(`/api/v1/integration-jobs/${id}`)
-    if (job.status === 'completed') return
-    if (job.status === 'failed') throw new Error(job.last_error ?? 'Sync failed; the worker will retry automatically.')
-    await new Promise((resolve) => window.setTimeout(resolve, 1500))
-  }
-  throw new Error('Sync is still queued or running. You can leave this page; processing continues in the background.')
-}
