@@ -51,15 +51,14 @@ func processNext(ctx context.Context, db *pgxpool.Pool, process Processor) (bool
 	var job Work
 	var id string
 	var eventID *string
-	var attempts int
 	err = tx.QueryRow(ctx, `
-  SELECT j.id,j.organization_id,j.integration_id,j.kind,j.event_id,j.attempts,COALESCE(e.payload,'{}'::jsonb)
+  SELECT j.id,j.organization_id,j.integration_id,j.kind,j.event_id,COALESCE(e.payload,'{}'::jsonb)
   FROM integration_jobs j
   JOIN integrations i ON i.organization_id=j.organization_id AND i.id=j.integration_id
   LEFT JOIN processed_events e ON e.organization_id=j.organization_id AND e.id=j.event_id
   WHERE j.status IN ('pending','failed') AND j.available_at <= now() AND i.status <> 'disconnected'
   ORDER BY j.available_at,j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 1
- `).Scan(&id, &job.OrganizationID, &job.IntegrationID, &job.Kind, &eventID, &attempts, &job.Payload)
+ `).Scan(&id, &job.OrganizationID, &job.IntegrationID, &job.Kind, &eventID, &job.Payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -74,15 +73,13 @@ func processNext(ctx context.Context, db *pgxpool.Pool, process Processor) (bool
 		return true, err
 	}
 	processErr := process(ctx, work, job)
+	// A fixed retry delay keeps the MVP easy to follow. Attempts remain visible.
 	if processErr != nil {
 		if err := work.Rollback(ctx); err != nil {
 			return true, err
 		}
-		if attempts > 9 {
-			attempts = 9
-		}
 		_, err = tx.Exec(ctx, `UPDATE integration_jobs SET status='failed',attempts=attempts+1,
-   available_at=now()+$2*interval '1 second',last_error='Processing failed; retry scheduled',updated_at=now() WHERE id=$1`, id, 1<<attempts)
+   available_at=now()+interval '30 seconds',last_error='Processing failed; retry scheduled',updated_at=now() WHERE id=$1`, id)
 		if err == nil && eventID != nil {
 			_, err = tx.Exec(ctx, `UPDATE processed_events SET status='failed',last_error='Processing failed; retry scheduled'
     WHERE organization_id=$1 AND id=$2`, job.OrganizationID, *eventID)
