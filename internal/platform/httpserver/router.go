@@ -58,6 +58,7 @@ func NewRouter(logger *zap.Logger, resources *database.Resources, stripeService 
 	)
 
 	hubSpotHandler := hubspotintegration.NewHandler(hubSpotService)
+	mux.HandleFunc("POST /api/v1/webhooks/hubspot/{integrationID}", hubSpotHandler.Webhook)
 	mux.Handle(
 		"POST /api/v1/integrations/hubspot",
 		authService.RequireAuthentication(auth.RequireOwner(http.HandlerFunc(hubSpotHandler.Save))),

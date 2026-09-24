@@ -64,6 +64,9 @@ func main() {
 			case "hubspot_sync":
 				_, err := hubSpotService.Sync(ctx, auth.Identity{OrganizationID: job.OrganizationID})
 				return err
+			case "hubspot_event":
+				_, err := hubSpotService.Sync(ctx, auth.Identity{OrganizationID: job.OrganizationID})
+				return err
 			default:
 				return errors.New("unknown integration job")
 			}

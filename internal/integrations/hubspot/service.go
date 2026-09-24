@@ -52,9 +52,10 @@ func NewService(database *pgxpool.Pool, cipher *encryption.Cipher, logger *zap.L
 	return &Service{database: database, cipher: cipher, client: &http.Client{Timeout: 20 * time.Second}, logger: logger}
 }
 
-func (s *Service) Save(ctx context.Context, identity auth.Identity, token string) (Integration, error) {
+func (s *Service) Save(ctx context.Context, identity auth.Identity, token, webhookSecret string) (Integration, error) {
 	token = strings.TrimSpace(token)
-	if token == "" || len(token) > 500 || s.checkAccess(ctx, token) != nil {
+	webhookSecret = strings.TrimSpace(webhookSecret)
+	if token == "" || len(token) > 500 || len(webhookSecret) > 500 || s.checkAccess(ctx, token) != nil {
 		return Integration{}, ErrInvalidSecret
 	}
 	encryptedToken, err := s.cipher.Encrypt(token)
@@ -65,15 +66,22 @@ func (s *Service) Save(ctx context.Context, identity auth.Identity, token string
 	if err != nil {
 		return Integration{}, err
 	}
+	if webhookSecret != "" {
+		encryptedEmpty, err = s.cipher.Encrypt(webhookSecret)
+		if err != nil {
+			return Integration{}, err
+		}
+	}
 	var integration Integration
 	err = s.database.QueryRow(ctx, `
 		INSERT INTO integrations (organization_id, provider, api_key_ciphertext, webhook_secret_ciphertext, status)
 		VALUES ($1, 'hubspot', $2, $3, 'active')
 		ON CONFLICT (organization_id, provider) DO UPDATE SET
 			api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+			webhook_secret_ciphertext = CASE WHEN $4 THEN EXCLUDED.webhook_secret_ciphertext ELSE integrations.webhook_secret_ciphertext END,
 			status = 'active', last_error = NULL, updated_at = now()
 		RETURNING id, status, last_synced_at, last_error
-	`, identity.OrganizationID, encryptedToken, encryptedEmpty).Scan(
+	`, identity.OrganizationID, encryptedToken, encryptedEmpty, webhookSecret != "").Scan(
 		&integration.ID, &integration.Status, &integration.LastSyncedAt, &integration.LastError,
 	)
 	return integration, err

@@ -22,14 +22,15 @@ func NewHandler(service *Service) *Handler {
 
 func (h *Handler) Save(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		AccessToken string `json:"access_token"`
+		AccessToken   string `json:"access_token"`
+		WebhookSecret string `json:"webhook_secret"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	identity, _ := auth.IdentityFromContext(r.Context())
-	integration, err := h.service.Save(r.Context(), identity, input.AccessToken)
+	integration, err := h.service.Save(r.Context(), identity, input.AccessToken, input.WebhookSecret)
 	if errors.Is(err, ErrInvalidSecret) {
 		writeError(w, http.StatusBadRequest, "invalid_hubspot_credentials", "The HubSpot token or property mapping is invalid.")
 		return
@@ -39,6 +40,23 @@ func (h *Handler) Save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, integration)
+}
+
+func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
+	if err := h.service.ReceiveWebhook(r); err != nil {
+		var status int
+		switch {
+		case errors.Is(err, errInvalidWebhook):
+			status = http.StatusBadRequest
+		case errors.Is(err, errWebhookNotFound):
+			status = http.StatusNotFound
+		default:
+			status = http.StatusServiceUnavailable
+		}
+		writeError(w, status, "hubspot_webhook_failed", "The HubSpot notification could not be verified or queued.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
