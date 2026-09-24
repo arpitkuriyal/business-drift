@@ -435,6 +435,7 @@ function HubSpotView({ integration, canManage, onChanged }: {
     try {
       const result = await saveHubSpot({
         access_token: String(values.get('access_token') ?? ''),
+        webhook_secret: String(values.get('webhook_secret') ?? ''),
       })
       onChanged(result)
       form.reset()
@@ -488,8 +489,10 @@ function HubSpotView({ integration, canManage, onChanged }: {
         </div>
         {canManage ? (
           <form className="grid gap-4.5" onSubmit={handleSave}>
-            <p className="m-0 leading-relaxed text-[#74807c]">Use a HubSpot private-app token with company read access. The backend validates and encrypts it.</p>
+            <p className="m-0 leading-relaxed text-[#74807c]">Use a HubSpot private-app token with company read access. To enable change notifications, add the app secret from your HubSpot webhook settings.</p>
             <label className={labelClass}>Private-app access token<input className={inputClass} name="access_token" type="password" placeholder="pat-…" autoComplete="off" required /></label>
+            <label className={labelClass}>Webhook app secret<input className={inputClass} name="webhook_secret" type="password" placeholder="Optional" autoComplete="off" /></label>
+            {integration && <p className="m-0 text-xs leading-relaxed text-[#74807c]">Webhook endpoint: <code>/api/v1/webhooks/hubspot/{integration.id}</code>. Subscribe this URL to company changes and use the app secret for signature verification.</p>}
             <button className={primaryButtonClass} type="submit" disabled={busy}>{busy ? 'Checking…' : 'Save connection'}</button>
           </form>
         ) : (

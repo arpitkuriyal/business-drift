@@ -121,7 +121,7 @@ export async function getHubSpot(): Promise<HubSpotIntegration | null> {
   }
 }
 
-export const saveHubSpot = (input: { access_token: string }) =>
+export const saveHubSpot = (input: { access_token: string; webhook_secret?: string }) =>
   request<HubSpotIntegration>('/api/v1/integrations/hubspot', { method: 'POST', body: JSON.stringify(input) })
 
 export const syncHubSpot = () =>
