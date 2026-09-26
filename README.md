@@ -1,17 +1,27 @@
 # Business Drift
 
-Business Drift finds customer mismatches between Stripe and HubSpot, such as a canceled subscription for a company still marked as a customer.
+Business Drift finds customer information that does not match between Stripe and HubSpot.
+
+Stripe tracks billing. HubSpot tracks how a company is classified. If one system changes and the other does not, reports and customer lists can become incorrect.
+
+```text
+Stripe subscription: canceled
+HubSpot lifecycle stage: Customer
+
+Finding: Acme is canceled in Stripe but active in HubSpot.
+```
 
 ![Business Drift architecture](docs/architecture.svg)
 
-## Features
+## What it does
 
-- Imports Stripe customers and subscriptions, and HubSpot companies.
-- Matches records by company domain.
-- Finds status mismatches and records missing from either system.
-- Shows findings with the source data behind them.
-- Supports multiple organizations, user roles, and encrypted integration credentials.
-- Uses signed webhooks and background jobs to keep data up to date.
+- Connects to Stripe sandbox and HubSpot.
+- Imports customers, subscriptions, and companies through background jobs.
+- Verifies Stripe and HubSpot webhook signatures and ignores duplicate events.
+- Matches Stripe customers with HubSpot companies by business domain.
+- Finds status mismatches and customers missing from either system.
+- Shows findings with the source values behind them.
+- Includes registration, login, roles, and organization-scoped data.
 
 ## Run locally
 
@@ -32,7 +42,7 @@ Open the address printed by Vite. Create a workspace with an organization name, 
 
 In **Stripe**, add a sandbox API key, create a customer with a business email, and select **Sync Stripe**.
 
-In **HubSpot**, create a private app with `crm.objects.companies.read` access. Add its token in Business Drift and select **Sync HubSpot companies**. A matching company domain, such as `acme.com`, links `person@acme.com` to the company.
+In **HubSpot**, create a private app with `crm.objects.companies.read` access. Add its token in Business Drift and select **Sync HubSpot companies**. Sync Stripe first, then HubSpot. A matching company domain, such as `acme.com`, links `person@acme.com` to the company.
 
 Findings appear under **Findings**. Personal email domains are not matched automatically.
 
@@ -53,7 +63,15 @@ Use the `whsec_...` secret printed by Stripe CLI. Never use a live Stripe key or
 
 ## Configuration
 
-Docker Compose sets local defaults. For production, set `APP_ENV=production` and provide `DATABASE_URL`, `REDIS_URL`, and `ENCRYPTION_KEY`.
+| Variable | Local default | Purpose |
+| --- | --- | --- |
+| `APP_ENV` | `development` | Runtime mode: `development`, `test`, or `production` |
+| `HTTP_ADDRESS` | `:8080` | Address and port used by the API |
+| `DATABASE_URL` | Local PostgreSQL connection | PostgreSQL connection string |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
+| `ENCRYPTION_KEY` | Development-only key | Base64-encoded 32-byte key used to encrypt integration credentials |
+
+For production, set `APP_ENV=production` and provide `DATABASE_URL`, `REDIS_URL`, and `ENCRYPTION_KEY` explicitly. Docker Compose supplies the local defaults.
 
 Generate a 32-byte encryption key with:
 
@@ -62,6 +80,32 @@ openssl rand -base64 32
 ```
 
 The frontend can use `VITE_API_URL` in `web/.env` when the API is hosted separately. See `web/.env.example`.
+
+## API routes
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v1/auth/register` | Create a workspace and owner |
+| `POST` | `/api/v1/auth/login` | Sign in |
+| `POST` | `/api/v1/auth/refresh` | Refresh the session |
+| `POST` | `/api/v1/auth/logout` | Sign out |
+| `GET` | `/api/v1/auth/me` | Read the signed-in identity |
+| `GET` | `/api/v1/organization` | Read the current workspace |
+| `GET` | `/api/v1/integrations/stripe` | Read Stripe connection status |
+| `POST` | `/api/v1/integrations/stripe` | Save a Stripe key and optional webhook secret |
+| `POST` | `/api/v1/integrations/stripe/sync` | Queue a Stripe sync |
+| `GET` | `/api/v1/integrations/hubspot` | Read HubSpot connection status |
+| `POST` | `/api/v1/integrations/hubspot` | Save a HubSpot token and optional app secret |
+| `POST` | `/api/v1/integrations/hubspot/sync` | Queue a HubSpot sync |
+| `POST` | `/api/v1/webhooks/stripe/{integrationID}` | Receive signed Stripe events |
+| `POST` | `/api/v1/webhooks/hubspot/{integrationID}` | Receive signed HubSpot events |
+| `GET` | `/api/v1/integration-jobs/{id}` | Read a job status |
+| `GET` | `/api/v1/findings` | List findings |
+| `GET` | `/api/v1/findings/{id}` | Read a finding and its evidence |
+| `GET` | `/health`, `/live` | Check that the API is running |
+| `GET` | `/ready` | Check the API and its dependencies |
+
+Authenticated routes use `Authorization: Bearer <token>`. Owners and admins can update integrations and start syncs.
 
 ## Useful commands
 
